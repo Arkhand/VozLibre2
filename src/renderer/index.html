@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.groq.com; media-src 'self' blob:">
+  <title>VozLibre</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Pildora. En reposo es COMPACTA: solo orbe + engranaje + cruz.
+       Se anade .has-result o .config-open para expandir el panel correspondiente. -->
+  <div class="pill" id="pill">
+
+    <!-- Barra superior (siempre visible). Arrastra la ventana. -->
+    <div class="bar" id="bar">
+      <button class="orb" id="recBtn" title="Mantené para grabar">
+        <span class="orb-dot"></span>
+      </button>
+
+      <!-- Centro: aparece solo cuando hay algo que decir (grabando / estado). -->
+      <div class="bar-center" id="barCenter">
+        <span class="status" id="status"></span>
+        <span class="timer" id="timer">00:00</span>
+      </div>
+
+      <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
+      <button class="icon-btn" id="closeBtn" title="Cerrar">✕</button>
+    </div>
+
+    <!-- Panel de RESULTADO (transcripción). -->
+    <div class="panel" id="resultPanel">
+      <div class="result empty" id="result">El texto transcripto aparecerá acá…</div>
+      <div class="panel-foot">
+        <button class="sec" id="copyBtn" disabled>📋 Copiar</button>
+        <button class="sec" id="clearBtn" disabled>🗑️ Limpiar</button>
+      </div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <!-- Panel de CONFIGURACIÓN (se abre con ⚙). -->
+    <div class="panel config" id="configPanel">
+      <div class="cfg-field">
+        <label for="cfgApiKey">API key de Groq</label>
+        <input type="password" id="cfgApiKey" placeholder="gsk_…" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgMic">Micrófono</label>
+        <select id="cfgMic"><option value="">Por defecto del sistema</option></select>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgLang">Idioma del audio</label>
+        <select id="cfgLang">
+          <option value="">Detectar automáticamente</option>
+          <option value="es">Español</option>
+          <option value="en">Inglés</option>
+          <option value="pt">Portugués</option>
+          <option value="fr">Francés</option>
+          <option value="it">Italiano</option>
+          <option value="de">Alemán</option>
+          <option value="ca">Catalán</option>
+          <option value="gl">Gallego</option>
+          <option value="eu">Euskera</option>
+        </select>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgAction">Al reconocer el texto</label>
+        <select id="cfgAction">
+          <option value="show">Solo mostrarlo</option>
+          <option value="paste">Pegarlo (Ctrl+V) en la app activa</option>
+          <option value="type">Simular pulsaciones de teclado</option>
+        </select>
+        <button class="sec test-btn" id="cfgTest">🧪 Probar acción (sin gastar API)</button>
+        <small class="cfg-hint" id="testHint">Hacé clic, tenés 1,5 s para enfocar tu app (Word/VDI) y se escribirá un texto de prueba.</small>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgShortcut">Atajo global</label>
+        <input type="text" id="cfgShortcut" placeholder="Hacé clic y presioná la combinación" readonly>
+        <small class="cfg-hint" id="shortcutHint">Mantenelo presionado para grabar desde cualquier app.</small>
+      </div>
+
+      <div class="panel-foot">
+        <button class="sec primary" id="cfgSave">Guardar</button>
+        <span class="cfg-saved" id="cfgSaved"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js" defer></script>
+</body>
+</html>

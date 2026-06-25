@@ -1,0 +1,28 @@
+# Dependencias
+node_modules/
+
+# Builds / empaquetado
+dist/
+out/
+build/
+
+# Logs
+npm-debug.log*
+*.log
+
+# Caches y temporales
+.cache/
+*.tmp
+
+# SO
+Thumbs.db
+.DS_Store
+
+# Datos locales de Electron (perfiles, userData de desarrollo)
+*.local
+
+# Configuración del usuario (contiene la API key) — NUNCA al repo
+settings.json
+
+# Locks/temporales de Claude
+.claude/scheduled_tasks.lock

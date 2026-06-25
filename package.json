@@ -1,0 +1,18 @@
+{
+  "name": "vozlibre2",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Píldora flotante de transcripción de voz (Groq Whisper) para Windows: ventana frameless, transparente y always-on-top que se expande al transcribir.",
+  "author": "Daniel Musial",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^26.6.10"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6"
+  }
+}
