@@ -170,6 +170,30 @@ html, body {
 }
 .pill.has-result #resultPanel { display: block; }
 .pill.config-open #configPanel { display: block; }
+/* Con la config abierta NUNCA se muestra el panel de resultado (aunque haya
+   has-result): config tiene prioridad. */
+.pill.config-open #resultPanel { display: none; }
+
+/* El panel de config tiene varios campos: si no entran en el alto máximo de la
+   ventana (MAX_H en main.js), el área de campos (.cfg-scroll) scrollea, mientras
+   el botón Guardar (.panel-foot) queda SIEMPRE visible y fijo abajo. */
+.cfg-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+.cfg-scroll::-webkit-scrollbar { width: 8px; }
+.cfg-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--accent-1), var(--accent-2));
+  border-radius: 8px;
+}
+/* Guardar fijo abajo, separado del área scrolleable por una línea sutil. */
+#configPanel .panel-foot {
+  margin-top: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-line);
+}
 
 .result {
   background: var(--field-bg);

@@ -27,6 +27,7 @@ const cfgMic      = document.getElementById("cfgMic");
 const cfgLang     = document.getElementById("cfgLang");
 const cfgAction   = document.getElementById("cfgAction");
 const cfgShortcut = document.getElementById("cfgShortcut");
+const cfgShortcutTranslate = document.getElementById("cfgShortcutTranslate");
 const cfgSave     = document.getElementById("cfgSave");
 const cfgSaved    = document.getElementById("cfgSaved");
 const cfgTest     = document.getElementById("cfgTest");
@@ -40,6 +41,7 @@ let isRecording = false;
 let timerId = null;
 let startTime = 0;
 let configOpen = false;
+let recordMode = "transcribe"; // "transcribe" (idioma config) | "translate" (→ inglés)
 
 // ---------------------------------------------------------------------------
 // Ventana: medir alto y pedir a Electron el resize.
@@ -109,6 +111,7 @@ async function loadConfigIntoUI() {
   cfgLang.value     = settings.lang ?? "es";
   cfgAction.value   = settings.action || "show";
   cfgShortcut.value = settings.shortcut || "";
+  cfgShortcutTranslate.value = settings.shortcutTranslate || "";
   await populateMics();
   cfgMic.value = settings.deviceId || "";
 }
@@ -138,6 +141,7 @@ async function saveConfig() {
     deviceId: cfgMic.value,
     action: cfgAction.value,
     shortcut: cfgShortcut.value,
+    shortcutTranslate: cfgShortcutTranslate.value,
   };
   settings = await window.pill.saveSettings(next);
   // Soltar el stream actual para que el próximo use el micrófono nuevo.
@@ -147,9 +151,9 @@ async function saveConfig() {
   setTimeout(() => cfgSaved.classList.remove("show"), 1600);
 }
 
-// Captura de combinación de teclas para el atajo (formato acelerador de Electron).
-function setupShortcutCapture() {
-  cfgShortcut.addEventListener("keydown", (e) => {
+// Captura de combinación de teclas en un input (formato acelerador de Electron).
+function attachShortcutCapture(input) {
+  input.addEventListener("keydown", (e) => {
     e.preventDefault();
     const mods = [];
     if (e.ctrlKey)  mods.push("Control");
@@ -159,23 +163,36 @@ function setupShortcutCapture() {
     const key = e.key;
     // Ignorar pulsar solo un modificador.
     if (["Control", "Shift", "Alt", "Meta"].includes(key)) {
-      cfgShortcut.value = mods.join("+") + "+…";
+      input.value = mods.join("+") + "+…";
       return;
     }
     let main = key.length === 1 ? key.toUpperCase() : key;
     if (key === " ") main = "Space";
-    cfgShortcut.value = [...mods, main].join("+");
+    input.value = [...mods, main].join("+");
   });
+}
+
+function setupShortcutCapture() {
+  attachShortcutCapture(cfgShortcut);
+  attachShortcutCapture(cfgShortcutTranslate);
 }
 
 function toggleConfig() {
   configOpen = !configOpen;
   pillEl.classList.toggle("config-open", configOpen);
   configBtn.classList.toggle("active", configOpen);
-  // Solo mientras la config está abierta la pildora puede tomar foco (para escribir
-  // la API key, etc.). Al cerrarla, vuelve a no-robar-foco.
+  if (configOpen) {
+    // Al abrir config: cortar grabación en curso y ocultar el panel de resultado
+    // (no se muestra texto transcripto mientras configurás). El main, vía
+    // setFocusable(true), también DESACTIVA los atajos globales.
+    if (isRecording) stopRecording();
+    pillEl.classList.remove("has-result");
+    setStatus("");
+    loadConfigIntoUI();
+  }
+  // Solo con la config abierta la pildora toma foco (para escribir) y los atajos
+  // globales quedan desactivados (se re-activan al cerrar).
   window.pill.setFocusable(configOpen);
-  if (configOpen) loadConfigIntoUI();
   refreshLayout();
 }
 
@@ -191,7 +208,40 @@ async function getStream() {
   return stream;
 }
 
-async function startRecording() {
+// Detección de voz/silencio: mientras grabamos, analizamos el volumen del micro
+// con Web Audio API. Si NUNCA superó el umbral, fue silencio -> no gastamos API.
+const SILENCE_THRESHOLD = 0.012; // RMS normalizado; ~ruido de fondo por debajo
+let audioCtx = null, analyser = null, volRaf = null, hadVoice = false;
+
+function startVolumeMonitor(s) {
+  hadVoice = false;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(s);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    src.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms > SILENCE_THRESHOLD) hadVoice = true;
+      volRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch { /* si falla el análisis, no bloqueamos: tratamos como con voz */ hadVoice = true; }
+}
+
+function stopVolumeMonitor() {
+  if (volRaf) cancelAnimationFrame(volRaf);
+  volRaf = null;
+  if (audioCtx) { try { audioCtx.close(); } catch {} }
+  audioCtx = null; analyser = null;
+}
+
+async function startRecording(mode = "transcribe") {
   if (isRecording) return;
   setError("");
   if (!settings.groqApiKey) {
@@ -202,13 +252,15 @@ async function startRecording() {
   try {
     const s = await getStream();
     chunks = [];
+    recordMode = mode; // "transcribe" | "translate"
     mediaRecorder = new MediaRecorder(s);
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
     mediaRecorder.onstop = handleStop;
     mediaRecorder.start();
+    startVolumeMonitor(s);
     isRecording = true;
     recBtn.classList.add("recording");
-    setStatus("Grabando… soltá para transcribir");
+    setStatus(mode === "translate" ? "Grabando (→ inglés)… soltá para traducir" : "Grabando… soltá para transcribir");
     startTimer();
   } catch (e) {
     setError("Sin micrófono: " + e.message);
@@ -219,6 +271,7 @@ function stopRecording() {
   if (!isRecording || !mediaRecorder) return;
   isRecording = false;
   stopTimer();
+  stopVolumeMonitor();
   recBtn.classList.remove("recording");
   setStatus("Procesando…");
   mediaRecorder.stop();
@@ -231,22 +284,33 @@ async function handleStop() {
     setError("No se grabó audio. Probá de nuevo.");
     return;
   }
-  await transcribe(blob);
+  // Audio vacío: si nunca se detectó voz, NO gastamos la API.
+  if (!hadVoice) {
+    setStatus("");
+    setError("🔇 No se detectó voz (no se gastó API).");
+    return;
+  }
+  await sendToGroq(blob, recordMode);
 }
 
-async function transcribe(blob) {
+// mode "transcribe" -> /audio/transcriptions (idioma de la config).
+// mode "translate"  -> /audio/translations  (traduce a inglés; sin 'language').
+async function sendToGroq(blob, mode = "transcribe") {
+  const translate = mode === "translate";
   recBtn.disabled = true;
-  setStatus("Transcribiendo con Groq…");
+  setStatus(translate ? "Traduciendo a inglés con Groq…" : "Transcribiendo con Groq…");
   setError("");
   const ext = blob.type.includes("ogg") ? "ogg" : "webm";
   const form = new FormData();
   form.append("file", blob, "audio." + ext);
-  form.append("model", MODEL);
+  form.append("model", MODEL); // whisper-large-v3 (único que traduce)
   form.append("response_format", "json");
-  if (settings.lang) form.append("language", settings.lang);
+  // El endpoint de translations sale SIEMPRE en inglés (sin 'language').
+  if (!translate && settings.lang) form.append("language", settings.lang);
 
+  const endpoint = translate ? "/audio/translations" : "/audio/transcriptions";
   try {
-    const res = await fetch(GROQ_BASE_URL + "/audio/transcriptions", {
+    const res = await fetch(GROQ_BASE_URL + endpoint, {
       method: "POST",
       headers: { "Authorization": "Bearer " + settings.groqApiKey },
       body: form,
@@ -331,9 +395,24 @@ copyBtn.addEventListener("click", async () => {
 });
 clearBtn.addEventListener("click", () => { setResult(""); setStatus(""); });
 
-// Atajo global PUSH-TO-TALK: mantener presionado = grabar, soltar = transcribir.
-window.pill.onPttDown(() => { if (!isRecording) startRecording(); });
-window.pill.onPttUp(() => { if (isRecording) stopRecording(); });
+// Atajos globales PUSH-TO-TALK: mantener = grabar, soltar = transcribir/traducir.
+// mode "transcribe" (idioma config) | "translate" (→ inglés).
+// Con la config abierta se ignoran (además el main ya desactiva los hooks): así
+// no se activa la grabación al setear el atajo presionando la misma combinación.
+//
+// A PRUEBA DE CRUCES: los dos atajos pueden compartir tecla (p.ej. Super+/ y
+// Control+Super+/). Si ya hay una grabación en curso, ignoramos cualquier nuevo
+// DOWN; y solo cortamos con el UP cuyo MODO coincide con el que inició la
+// grabación. Así nunca se mezcla "español" con "inglés".
+window.pill.onPttDown((mode) => {
+  if (configOpen || isRecording) return;
+  startRecording(mode);
+});
+window.pill.onPttUp((mode) => {
+  if (configOpen || !isRecording) return;
+  if (mode && mode !== recordMode) return; // UP de otro atajo: ignorar
+  stopRecording();
+});
 
 // ---------------------------------------------------------------------------
 // Init

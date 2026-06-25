@@ -19,11 +19,13 @@ VozLibre2/
 ├─ settings.json       # CONFIG del usuario (API key, etc.) — IGNORADO por git.
 ├─ src/
 │  ├─ preload.js       # PRELOAD: expone window.pill (close, resize, settings,
-│  │                   #   paste/type, shortcut) por contextBridge (contextIsolation).
+│  │                   #   paste/type, ptt, testAction) por contextBridge.
 │  ├─ settings.js      # PERSISTENCIA: load/save de settings.json (junto al exe).
+│  ├─ type-unicode.ps1 # tecleo Unicode real (SendInput) — acción "type", VDI-friendly.
+│  ├─ keyhook.ps1      # hook de teclado LL para push-to-talk global (DOWN/UP por stdout).
 │  └─ renderer/        # RENDERER (UI): la píldora.
-│     ├─ index.html    #   barra (orbe/estado/cerrar) + panel expandible (resultado).
-│     ├─ renderer.js   #   grabación (MediaRecorder) → Groq Whisper → expandir/medir.
+│     ├─ index.html    #   barra (orbe/estado/⚙/✕) + paneles resultado y config.
+│     ├─ renderer.js   #   grabación + detección de silencio → Groq (transcribe/translate).
 │     └─ style.css     #   diseño glass/píldora, transparente, expansión.
 └─ .claude/
    └─ memory/          # memoria del proyecto versionada en GitHub (este archivo).

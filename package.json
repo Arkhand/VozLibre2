@@ -7,12 +7,41 @@
   "license": "MIT",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "icon": "node assets/make-icon.js",
+    "dist": "electron-builder --win portable"
   },
   "devDependencies": {
-    "electron": "^26.6.10"
+    "electron": "^26.6.10",
+    "electron-builder": "^24.13.3"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6"
+  },
+  "build": {
+    "appId": "com.danielmusial.vozlibre2",
+    "productName": "VozLibre2",
+    "icon": "assets/icon.ico",
+    "files": [
+      "main.js",
+      "src/**/*",
+      "!src/**/*.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "src/keyhook.ps1",
+        "to": "keyhook.ps1"
+      },
+      {
+        "from": "src/type-unicode.ps1",
+        "to": "type-unicode.ps1"
+      }
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
   }
 }

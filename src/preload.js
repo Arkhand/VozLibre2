@@ -30,7 +30,8 @@ contextBridge.exposeInMainWorld("pill", {
   // Atajo global
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),
 
-  // Push-to-talk global: el main avisa keydown/keyup del atajo (hook de teclado).
-  onPttDown: (cb) => ipcRenderer.on("pill:ptt-down", () => cb()),
-  onPttUp: (cb) => ipcRenderer.on("pill:ptt-up", () => cb()),
+  // Push-to-talk global: el main avisa keydown/keyup del atajo (hook de teclado),
+  // con el modo: "transcribe" (idioma config) | "translate" (→ inglés).
+  onPttDown: (cb) => ipcRenderer.on("pill:ptt-down", (_e, mode) => cb(mode)),
+  onPttUp: (cb) => ipcRenderer.on("pill:ptt-up", (_e, mode) => cb(mode)),
 });

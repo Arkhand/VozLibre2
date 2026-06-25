@@ -111,12 +111,15 @@ function resizeTo(contentHeight) {
 }
 
 // ---------------------------------------------------------------------------
-// Atajo global PUSH-TO-TALK (grabar desde cualquier app mientras se MANTIENE
-// presionado). Usa un hook de teclado de bajo nivel (src/keyhook.ps1) porque el
-// globalShortcut de Electron NO detecta el keyup. El hook imprime DOWN/UP por
-// stdout; aquí se traduce a pill:ptt-down / pill:ptt-up para la pildora.
+// Atajos globales PUSH-TO-TALK (grabar desde cualquier app mientras se MANTIENE
+// presionado). Usan hooks de teclado de bajo nivel (src/keyhook.ps1) porque el
+// globalShortcut de Electron NO detecta el keyup. Hay DOS atajos:
+//   - transcribe: graba en el idioma de la config.
+//   - translate:  graba y traduce a inglés (/audio/translations).
+// Cada uno corre su propio proceso-hook. El hook imprime DOWN/UP; aquí se traduce
+// a pill:ptt-down / pill:ptt-up con el MODO correspondiente.
 // ---------------------------------------------------------------------------
-let hookProc = null;
+const hooks = {}; // { transcribe: proc, translate: proc }
 
 // "Control+Shift+Space" -> { key:"Space", ctrl, shift, alt, win } para el hook.
 function parseAccelerator(accel) {
@@ -133,18 +136,22 @@ function parseAccelerator(accel) {
   return r;
 }
 
-function stopHook() {
-  if (hookProc && hookProc.pid) {
-    // taskkill /T mata el árbol (PowerShell + su hook) de forma fiable en Windows.
-    try { execFileSync("taskkill", ["/PID", String(hookProc.pid), "/T", "/F"], { windowsHide: true }); }
-    catch { try { hookProc.kill(); } catch {} }
+function killHookProc(proc) {
+  if (proc && proc.pid) {
+    try { execFileSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true }); }
+    catch { try { proc.kill(); } catch {} }
   }
-  hookProc = null;
 }
 
-function registerShortcut(accelerator) {
-  stopHook();
-  currentShortcut = accelerator || null;
+function stopHook(mode) {
+  if (mode) { killHookProc(hooks[mode]); hooks[mode] = null; return; }
+  // Sin modo: parar todos.
+  for (const m of Object.keys(hooks)) { killHookProc(hooks[m]); hooks[m] = null; }
+}
+
+// Lanza un hook para un atajo, emitiendo eventos con el modo dado.
+function startHook(accelerator, mode) {
+  stopHook(mode);
   if (!accelerator) return { ok: true };
 
   const { key, ctrl, shift, alt, win: winMod } = parseAccelerator(accelerator);
@@ -158,27 +165,37 @@ function registerShortcut(accelerator) {
   if (alt) args.push("-Alt");
   if (winMod) args.push("-Win");
 
+  let proc;
   try {
-    hookProc = spawn("powershell.exe", args, { windowsHide: true });
+    proc = spawn("powershell.exe", args, { windowsHide: true });
   } catch (err) {
     return { ok: false, error: err.message };
   }
+  hooks[mode] = proc;
 
   let buf = "";
-  hookProc.stdout.on("data", (d) => {
+  proc.stdout.on("data", (d) => {
     buf += d.toString();
     let i;
     while ((i = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
-      if (line === "DOWN" && win) win.webContents.send("pill:ptt-down");
-      else if (line === "UP" && win) win.webContents.send("pill:ptt-up");
+      if (line === "DOWN" && win) win.webContents.send("pill:ptt-down", mode);
+      else if (line === "UP" && win) win.webContents.send("pill:ptt-up", mode);
     }
   });
-  hookProc.stderr.on("data", (d) => process.stderr.write(`[keyhook] ${d}`));
-  hookProc.on("exit", () => { hookProc = null; });
-  hookProc.on("error", () => { hookProc = null; });
+  proc.stderr.on("data", (d) => process.stderr.write(`[keyhook:${mode}] ${d}`));
+  proc.on("exit", () => { if (hooks[mode] === proc) hooks[mode] = null; });
+  proc.on("error", () => { if (hooks[mode] === proc) hooks[mode] = null; });
   return { ok: true };
+}
+
+// Registra ambos atajos desde la config. Acepta el objeto settings completo.
+function registerShortcuts(cfg) {
+  currentShortcut = cfg.shortcut || null;
+  const r1 = startHook(cfg.shortcut, "transcribe");
+  const r2 = startHook(cfg.shortcutTranslate, "translate");
+  return { ok: r1.ok && r2.ok, transcribe: r1, translate: r2 };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,10 +262,12 @@ ipcMain.on("pill:resize", (_e, height) => resizeTo(height));
 ipcMain.handle("settings:load", () => settings.load());
 ipcMain.handle("settings:save", (_e, partial) => {
   const next = settings.save(partial);
-  // Si cambio el atajo, re-registrarlo.
-  if (partial && Object.prototype.hasOwnProperty.call(partial, "shortcut")) {
-    registerShortcut(next.shortcut);
-  }
+  // Si cambió algún atajo, re-registrar ambos.
+  const touchedShortcut = partial && (
+    Object.prototype.hasOwnProperty.call(partial, "shortcut") ||
+    Object.prototype.hasOwnProperty.call(partial, "shortcutTranslate")
+  );
+  if (touchedShortcut) registerShortcuts(next);
   return next;
 });
 
@@ -256,8 +275,14 @@ ipcMain.handle("text:paste", (_e, text) => pasteText(text));
 ipcMain.handle("text:type", (_e, text) => typeText(text));
 ipcMain.handle("clipboard:write", (_e, text) => { clipboard.writeText(text); return { ok: true }; });
 
-// La pildora pide foco solo mientras la config está abierta (para escribir).
-ipcMain.on("pill:focusable", (_e, on) => setFocusable(on));
+// La config abierta: la pildora toma foco (para escribir) Y se DESACTIVAN los
+// atajos globales. Si no, al setear el atajo presionarías la misma combinación y
+// se dispararía la grabación. Al cerrar, se re-registran los atajos.
+ipcMain.on("pill:focusable", (_e, on) => {
+  setFocusable(on);
+  if (on) stopHook();                       // config abierta -> sin atajos globales
+  else registerShortcuts(settings.load());  // config cerrada -> reactivar atajos
+});
 
 // MODO PRUEBA: dispara la acción ("paste"/"type") con texto fijo, sin gastar API.
 // Da 1.5s para que pongas el foco en tu app destino (Notepad/Word/VDI).
@@ -268,7 +293,7 @@ ipcMain.handle("test:action", async (_e, action) => {
   return typeText(sample);
 });
 
-ipcMain.handle("shortcut:register", (_e, accelerator) => registerShortcut(accelerator));
+ipcMain.handle("shortcut:register", () => registerShortcuts(settings.load()));
 
 app.on("second-instance", () => {
   if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
@@ -279,9 +304,8 @@ app.on("second-instance", () => {
 // ---------------------------------------------------------------------------
 app.whenReady().then(() => {
   createWindow();
-  // Registrar el atajo guardado al arrancar.
-  const cfg = settings.load();
-  if (cfg.shortcut) registerShortcut(cfg.shortcut);
+  // Registrar los atajos guardados al arrancar.
+  registerShortcuts(settings.load());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

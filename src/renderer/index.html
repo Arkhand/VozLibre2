@@ -39,8 +39,10 @@
       <div class="err" id="err"></div>
     </div>
 
-    <!-- Panel de CONFIGURACIÓN (se abre con ⚙). -->
+    <!-- Panel de CONFIGURACIÓN (se abre con ⚙). Los campos scrollean; el botón
+         Guardar queda fijo abajo (fuera del scroll). -->
     <div class="panel config" id="configPanel">
+      <div class="cfg-scroll" id="cfgScroll">
       <div class="cfg-field">
         <label for="cfgApiKey">API key de Groq</label>
         <input type="password" id="cfgApiKey" placeholder="gsk_…" autocomplete="off" spellcheck="false">
@@ -79,10 +81,17 @@
       </div>
 
       <div class="cfg-field">
-        <label for="cfgShortcut">Atajo global</label>
+        <label for="cfgShortcut">Atajo: dictar (idioma de arriba)</label>
         <input type="text" id="cfgShortcut" placeholder="Hacé clic y presioná la combinación" readonly>
-        <small class="cfg-hint" id="shortcutHint">Mantenelo presionado para grabar desde cualquier app.</small>
+        <small class="cfg-hint">Mantenelo presionado para grabar desde cualquier app.</small>
       </div>
+
+      <div class="cfg-field">
+        <label for="cfgShortcutTranslate">Atajo: traducir a inglés 🇬🇧</label>
+        <input type="text" id="cfgShortcutTranslate" placeholder="Hacé clic y presioná la combinación" readonly>
+        <small class="cfg-hint">Mantenelo presionado para grabar y traducir a inglés.</small>
+      </div>
+      </div><!-- /.cfg-scroll -->
 
       <div class="panel-foot">
         <button class="sec primary" id="cfgSave">Guardar</button>

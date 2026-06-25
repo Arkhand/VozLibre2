@@ -15,7 +15,8 @@ const DEFAULTS = {
   lang: "es",            // idioma del audio ("" = autodetectar)
   deviceId: "",          // micrófono elegido ("" = el por defecto del sistema)
   action: "show",        // qué hacer con el texto: "show" | "paste" | "type"
-  shortcut: "Control+Shift+Space", // atajo global (acelerador de Electron)
+  shortcut: "Control+Shift+Space",  // atajo: grabar en el idioma de abajo
+  shortcutTranslate: "Control+Shift+E", // atajo: grabar y traducir a inglés
 };
 
 function settingsPath() {

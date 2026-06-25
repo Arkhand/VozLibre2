@@ -3,6 +3,7 @@ node_modules/
 
 # Builds / empaquetado
 dist/
+dist2/
 out/
 build/
 
