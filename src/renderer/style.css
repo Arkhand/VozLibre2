@@ -303,3 +303,37 @@ html, body {
   transition: opacity .2s ease;
 }
 .cfg-saved.show { opacity: 1; }
+
+/* ----- Confirmación "salir sin guardar" ----- */
+/* Mientras se pregunta, ocultamos el formulario (campos + Guardar) y dejamos SOLO
+   la pregunta: así el cuadro siempre cabe en la ventana y no queda cortado abajo. */
+#configPanel.confirming .cfg-scroll,
+#configPanel.confirming .panel-foot { display: none; }
+#configPanel.confirming { padding-top: 8px; }
+
+.cfg-confirm {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  background: rgba(244, 63, 94, 0.10);
+}
+.cfg-confirm[hidden] { display: none; }
+.cfg-confirm-msg {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+.cfg-confirm-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.sec.danger {
+  border-color: rgba(244, 63, 94, 0.5);
+  color: #ffd9df;
+}
+.sec.danger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.20);
+  border-color: rgba(244, 63, 94, 0.7);
+}

@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("pill", {
 
   // Atajo global
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),
+  // Captura nativa del atajo (uiohook): resuelve con {ok, bind:{keycode,ctrl,...}}.
+  captureShortcut: () => ipcRenderer.invoke("shortcut:capture"),
 
   // Push-to-talk global: el main avisa keydown/keyup del atajo (hook de teclado),
   // con el modo: "transcribe" (idioma config) | "translate" (→ inglés).

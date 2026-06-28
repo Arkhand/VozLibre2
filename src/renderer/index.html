@@ -26,7 +26,7 @@
       </div>
 
       <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
-      <button class="icon-btn" id="closeBtn" title="Cerrar">✕</button>
+      <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)">✕</button>
     </div>
 
     <!-- Panel de RESULTADO (transcripción). -->
@@ -97,9 +97,23 @@
         <button class="sec primary" id="cfgSave">Guardar</button>
         <span class="cfg-saved" id="cfgSaved"></span>
       </div>
+
+      <!-- Confirmación al cerrar con cambios sin guardar (oculto por defecto). -->
+      <div class="cfg-confirm" id="cfgConfirm" hidden>
+        <p class="cfg-confirm-msg">Hay cambios sin guardar. ¿Salir sin guardar?</p>
+        <div class="cfg-confirm-btns">
+          <button class="sec" id="cfgConfirmCancel">Seguir editando</button>
+          <button class="sec danger" id="cfgConfirmDiscard">Salir sin guardar</button>
+        </div>
+      </div>
     </div>
   </div>
 
+  <!-- Módulos del renderer (orden importa: ui y transcription definen los globals
+       VLUI/VLTranscription que renderer.js orquesta). defer = se ejecutan en orden
+       tras parsear el DOM. -->
+  <script src="ui.js" defer></script>
+  <script src="transcription.js" defer></script>
   <script src="renderer.js" defer></script>
 </body>
 </html>

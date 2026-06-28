@@ -16,7 +16,8 @@
     "electron-builder": "^24.13.3"
   },
   "dependencies": {
-    "@nut-tree-fork/nut-js": "^4.2.6"
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "uiohook-napi": "^1.5.5"
   },
   "build": {
     "appId": "com.danielmusial.vozlibre2",
@@ -25,13 +26,10 @@
     "files": [
       "main.js",
       "src/**/*",
-      "!src/**/*.ps1"
+      "!src/**/*.ps1",
+      "assets/icon.ico"
     ],
     "extraResources": [
-      {
-        "from": "src/keyhook.ps1",
-        "to": "keyhook.ps1"
-      },
       {
         "from": "src/type-unicode.ps1",
         "to": "type-unicode.ps1"

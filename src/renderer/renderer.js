@@ -1,424 +1,106 @@
-/* VozLibre2 — Renderer (UI de la pildora)
- * =======================================
- * Grabacion (MediaRecorder) -> Groq Whisper -> accion configurada (mostrar /
- * pegar / teclear). Estado COLAPSADO en reposo; expande al grabar/transcribir o
- * al abrir config. La config se persiste via window.pill.saveSettings.
+/* VozLibre2 — Orquestador del renderer
+ * =====================================
+ * Pega los módulos del renderer entre sí y con el proceso main (window.pill):
+ *   - VLUI            → UI/DOM (estados, layout, panel de config).
+ *   - VLTranscription → grabación + llamada a Groq.
+ *   - window.pill     → puente IPC (settings, paste/type, atajos, push-to-talk).
+ * Acá viven: el flujo de grabar→reconocer→aplicar acción, el push-to-talk global y
+ * la carga/guardado de config. La lógica concreta está en cada módulo.
  */
+(function () {
+  const UI = window.VLUI;
+  const TR = window.VLTranscription;
 
-const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const MODEL = "whisper-large-v3";
+  let settings = {};
 
-// ----- DOM -----
-const pillEl    = document.getElementById("pill");
-const recBtn    = document.getElementById("recBtn");
-const configBtn = document.getElementById("configBtn");
-const closeBtn  = document.getElementById("closeBtn");
-const barCenter = document.getElementById("barCenter");
-const statusEl  = document.getElementById("status");
-const timer     = document.getElementById("timer");
-const result    = document.getElementById("result");
-const copyBtn   = document.getElementById("copyBtn");
-const clearBtn  = document.getElementById("clearBtn");
-const errEl     = document.getElementById("err");
+  // ---- Aplicar la acción configurada al texto reconocido ----
+  async function applyAction(text) {
+    if (!text) { UI.setStatus(""); UI.setError("No se reconoció texto."); return; }
+    const action = settings.action || "show";
+    UI.setResult(text); // siempre mostramos el texto como referencia
 
-// Config
-const cfgApiKey   = document.getElementById("cfgApiKey");
-const cfgMic      = document.getElementById("cfgMic");
-const cfgLang     = document.getElementById("cfgLang");
-const cfgAction   = document.getElementById("cfgAction");
-const cfgShortcut = document.getElementById("cfgShortcut");
-const cfgShortcutTranslate = document.getElementById("cfgShortcutTranslate");
-const cfgSave     = document.getElementById("cfgSave");
-const cfgSaved    = document.getElementById("cfgSaved");
-const cfgTest     = document.getElementById("cfgTest");
-
-// ----- Estado -----
-let settings = {};
-let mediaRecorder = null;
-let chunks = [];
-let stream = null;
-let isRecording = false;
-let timerId = null;
-let startTime = 0;
-let configOpen = false;
-let recordMode = "transcribe"; // "transcribe" (idioma config) | "translate" (→ inglés)
-
-// ---------------------------------------------------------------------------
-// Ventana: medir alto y pedir a Electron el resize.
-// ---------------------------------------------------------------------------
-function syncWindowHeight() {
-  const h = Math.ceil(pillEl.getBoundingClientRect().height) + 12; // +12 por el margin (6px×2)
-  window.pill?.resize(h);
-}
-
-function refreshLayout() {
-  // Hay centro (status) si grabamos o hay texto de estado.
-  const showCenter = isRecording || statusEl.textContent.trim() !== "";
-  barCenter.classList.toggle("show", showCenter);
-  requestAnimationFrame(syncWindowHeight);
-}
-
-// ---------------------------------------------------------------------------
-// UI helpers
-// ---------------------------------------------------------------------------
-function fmt(ms) {
-  const total = Math.floor(ms / 1000);
-  const m = String(Math.floor(total / 60)).padStart(2, "0");
-  const s = String(total % 60).padStart(2, "0");
-  return m + ":" + s;
-}
-function startTimer() {
-  startTime = performance.now();
-  timer.classList.add("live");
-  timer.textContent = "00:00";
-  timerId = setInterval(() => { timer.textContent = fmt(performance.now() - startTime); }, 200);
-}
-function stopTimer() {
-  clearInterval(timerId);
-  timerId = null;
-  timer.classList.remove("live");
-}
-function setStatus(msg) { statusEl.textContent = msg || ""; refreshLayout(); }
-function setError(msg) {
-  errEl.textContent = msg || "";
-  if (msg) pillEl.classList.add("has-result");
-  refreshLayout();
-}
-function setResult(text) {
-  if (text && text.trim()) {
-    result.textContent = text.trim();
-    result.classList.remove("empty");
-    copyBtn.disabled = false;
-    clearBtn.disabled = false;
-    pillEl.classList.add("has-result");
-  } else {
-    result.textContent = "El texto transcripto aparecerá acá…";
-    result.classList.add("empty");
-    copyBtn.disabled = true;
-    clearBtn.disabled = true;
-    errEl.textContent = "";
-    pillEl.classList.remove("has-result");
-  }
-  refreshLayout();
-}
-
-// ---------------------------------------------------------------------------
-// Config: cargar/guardar, micrófonos, captura de atajo.
-// ---------------------------------------------------------------------------
-async function loadConfigIntoUI() {
-  settings = await window.pill.loadSettings();
-  cfgApiKey.value   = settings.groqApiKey || "";
-  cfgLang.value     = settings.lang ?? "es";
-  cfgAction.value   = settings.action || "show";
-  cfgShortcut.value = settings.shortcut || "";
-  cfgShortcutTranslate.value = settings.shortcutTranslate || "";
-  await populateMics();
-  cfgMic.value = settings.deviceId || "";
-}
-
-async function populateMics() {
-  try {
-    // Necesitamos permiso para ver labels de los dispositivos.
-    try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter((d) => d.kind === "audioinput");
-    cfgMic.innerHTML = '<option value="">Por defecto del sistema</option>';
-    mics.forEach((d, i) => {
-      const opt = document.createElement("option");
-      opt.value = d.deviceId;
-      opt.textContent = d.label || `Micrófono ${i + 1}`;
-      cfgMic.appendChild(opt);
-    });
-  } catch (e) {
-    // si falla, queda solo "por defecto"
-  }
-}
-
-async function saveConfig() {
-  const next = {
-    groqApiKey: cfgApiKey.value.trim(),
-    lang: cfgLang.value,
-    deviceId: cfgMic.value,
-    action: cfgAction.value,
-    shortcut: cfgShortcut.value,
-    shortcutTranslate: cfgShortcutTranslate.value,
-  };
-  settings = await window.pill.saveSettings(next);
-  // Soltar el stream actual para que el próximo use el micrófono nuevo.
-  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-  cfgSaved.textContent = "✓ Guardado";
-  cfgSaved.classList.add("show");
-  setTimeout(() => cfgSaved.classList.remove("show"), 1600);
-}
-
-// Captura de combinación de teclas en un input (formato acelerador de Electron).
-function attachShortcutCapture(input) {
-  input.addEventListener("keydown", (e) => {
-    e.preventDefault();
-    const mods = [];
-    if (e.ctrlKey)  mods.push("Control");
-    if (e.shiftKey) mods.push("Shift");
-    if (e.altKey)   mods.push("Alt");
-    if (e.metaKey)  mods.push("Super");
-    const key = e.key;
-    // Ignorar pulsar solo un modificador.
-    if (["Control", "Shift", "Alt", "Meta"].includes(key)) {
-      input.value = mods.join("+") + "+…";
+    if (action === "show") { UI.setStatus("Listo."); return; }
+    if (action === "paste") {
+      const r = await window.pill.paste(text);
+      UI.setStatus(r?.ok ? "Pegado (Ctrl+V) ✓" : "No se pudo pegar");
+      if (!r?.ok) UI.setError(r?.error || "Error al pegar");
       return;
     }
-    let main = key.length === 1 ? key.toUpperCase() : key;
-    if (key === " ") main = "Space";
-    input.value = [...mods, main].join("+");
-  });
-}
-
-function setupShortcutCapture() {
-  attachShortcutCapture(cfgShortcut);
-  attachShortcutCapture(cfgShortcutTranslate);
-}
-
-function toggleConfig() {
-  configOpen = !configOpen;
-  pillEl.classList.toggle("config-open", configOpen);
-  configBtn.classList.toggle("active", configOpen);
-  if (configOpen) {
-    // Al abrir config: cortar grabación en curso y ocultar el panel de resultado
-    // (no se muestra texto transcripto mientras configurás). El main, vía
-    // setFocusable(true), también DESACTIVA los atajos globales.
-    if (isRecording) stopRecording();
-    pillEl.classList.remove("has-result");
-    setStatus("");
-    loadConfigIntoUI();
-  }
-  // Solo con la config abierta la pildora toma foco (para escribir) y los atajos
-  // globales quedan desactivados (se re-activan al cerrar).
-  window.pill.setFocusable(configOpen);
-  refreshLayout();
-}
-
-// ---------------------------------------------------------------------------
-// Grabación + transcripción
-// ---------------------------------------------------------------------------
-async function getStream() {
-  if (stream) return stream;
-  const constraints = settings.deviceId
-    ? { audio: { deviceId: { exact: settings.deviceId } } }
-    : { audio: true };
-  stream = await navigator.mediaDevices.getUserMedia(constraints);
-  return stream;
-}
-
-// Detección de voz/silencio: mientras grabamos, analizamos el volumen del micro
-// con Web Audio API. Si NUNCA superó el umbral, fue silencio -> no gastamos API.
-const SILENCE_THRESHOLD = 0.012; // RMS normalizado; ~ruido de fondo por debajo
-let audioCtx = null, analyser = null, volRaf = null, hadVoice = false;
-
-function startVolumeMonitor(s) {
-  hadVoice = false;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = audioCtx.createMediaStreamSource(s);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    src.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
-    const tick = () => {
-      analyser.getFloatTimeDomainData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-      const rms = Math.sqrt(sum / buf.length);
-      if (rms > SILENCE_THRESHOLD) hadVoice = true;
-      volRaf = requestAnimationFrame(tick);
-    };
-    tick();
-  } catch { /* si falla el análisis, no bloqueamos: tratamos como con voz */ hadVoice = true; }
-}
-
-function stopVolumeMonitor() {
-  if (volRaf) cancelAnimationFrame(volRaf);
-  volRaf = null;
-  if (audioCtx) { try { audioCtx.close(); } catch {} }
-  audioCtx = null; analyser = null;
-}
-
-async function startRecording(mode = "transcribe") {
-  if (isRecording) return;
-  setError("");
-  if (!settings.groqApiKey) {
-    pillEl.classList.add("has-result");
-    setError("⚠️ Falta tu API key de Groq. Abrí ⚙ y pegala.");
-    return;
-  }
-  try {
-    const s = await getStream();
-    chunks = [];
-    recordMode = mode; // "transcribe" | "translate"
-    mediaRecorder = new MediaRecorder(s);
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-    mediaRecorder.onstop = handleStop;
-    mediaRecorder.start();
-    startVolumeMonitor(s);
-    isRecording = true;
-    recBtn.classList.add("recording");
-    setStatus(mode === "translate" ? "Grabando (→ inglés)… soltá para traducir" : "Grabando… soltá para transcribir");
-    startTimer();
-  } catch (e) {
-    setError("Sin micrófono: " + e.message);
-  }
-}
-
-function stopRecording() {
-  if (!isRecording || !mediaRecorder) return;
-  isRecording = false;
-  stopTimer();
-  stopVolumeMonitor();
-  recBtn.classList.remove("recording");
-  setStatus("Procesando…");
-  mediaRecorder.stop();
-}
-
-async function handleStop() {
-  const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
-  if (blob.size === 0) {
-    setStatus("");
-    setError("No se grabó audio. Probá de nuevo.");
-    return;
-  }
-  // Audio vacío: si nunca se detectó voz, NO gastamos la API.
-  if (!hadVoice) {
-    setStatus("");
-    setError("🔇 No se detectó voz (no se gastó API).");
-    return;
-  }
-  await sendToGroq(blob, recordMode);
-}
-
-// mode "transcribe" -> /audio/transcriptions (idioma de la config).
-// mode "translate"  -> /audio/translations  (traduce a inglés; sin 'language').
-async function sendToGroq(blob, mode = "transcribe") {
-  const translate = mode === "translate";
-  recBtn.disabled = true;
-  setStatus(translate ? "Traduciendo a inglés con Groq…" : "Transcribiendo con Groq…");
-  setError("");
-  const ext = blob.type.includes("ogg") ? "ogg" : "webm";
-  const form = new FormData();
-  form.append("file", blob, "audio." + ext);
-  form.append("model", MODEL); // whisper-large-v3 (único que traduce)
-  form.append("response_format", "json");
-  // El endpoint de translations sale SIEMPRE en inglés (sin 'language').
-  if (!translate && settings.lang) form.append("language", settings.lang);
-
-  const endpoint = translate ? "/audio/translations" : "/audio/transcriptions";
-  try {
-    const res = await fetch(GROQ_BASE_URL + endpoint, {
-      method: "POST",
-      headers: { "Authorization": "Bearer " + settings.groqApiKey },
-      body: form,
-    });
-    if (!res.ok) {
-      const detail = await res.text();
-      throw new Error("HTTP " + res.status + " — " + detail);
+    if (action === "type") {
+      UI.setStatus("Tecleando…");
+      const r = await window.pill.type(text);
+      UI.setStatus(r?.ok ? "Tecleado ✓" : "No se pudo teclear");
+      if (!r?.ok) UI.setError(r?.error || "Error al teclear");
     }
-    const data = await res.json();
-    const text = (data.text || "").trim();
-    await applyAction(text);
-  } catch (e) {
-    setError("Error: " + e.message);
-    setStatus("");
-  } finally {
-    recBtn.disabled = false;
   }
-}
 
-// Aplica la acción configurada al texto reconocido.
-async function applyAction(text) {
-  if (!text) { setStatus(""); setError("No se reconoció texto."); return; }
-  const action = settings.action || "show";
+  // ---- Conectar Transcription con la UI ----
+  TR.configure({
+    getSettings: () => settings,
+    onStatus: (m) => UI.setStatus(m),
+    onError: (m) => UI.setError(m),
+    onText: (text) => applyAction(text),
+    onRecordingChange: (on) => UI.setRecordingUI(on),
+  });
 
-  // Siempre mostramos el texto (referencia visual).
-  setResult(text);
+  // ---- Conectar la UI con el resto ----
+  UI.configure({
+    isRecording: () => TR.isRecording(),
+    onRecordStart: (mode) => TR.start(mode),
+    onRecordStop: () => TR.stop(),
+    onConfigOpen: async (open) => {
+      // La píldora toma foco solo con la config abierta (para escribir); el main
+      // desactiva/reactiva los atajos globales en consecuencia.
+      window.pill.setFocusable(open);
+      if (open) { settings = await window.pill.loadSettings(); await UI.loadConfigIntoUI(settings); }
+    },
+    onSaveConfig: async (formValues) => {
+      settings = await window.pill.saveSettings(formValues);
+      TR.releaseStream(); // el próximo getStream usará el micrófono nuevo
+      UI.flashSaved();
+      UI.clearDirty();    // cambios ya persistidos: no preguntar al cerrar
+      UI.closeConfig();   // guardar cierra el panel de config
+    },
+    onCopy: async (text) => {
+      await window.pill.copyToClipboard(text);
+      // feedback breve en el botón lo maneja la UI vía clase; acá basta el copiado
+    },
+    onTest: async (action) => {
+      if (action === "show") {
+        UI.setResult("Prueba VozLibre: áéíóú ñÑ ¿Está? ¡Sí! 123");
+        UI.setStatus('Acción "Solo mostrar": el texto aparece acá ✓');
+        return;
+      }
+      if (UI.isConfigOpen()) UI.toggleConfig(); // cerrar para soltar el foco
+      UI.setTestBusy(true);
+      UI.setStatus("Enfocá tu app… (1,5 s)");
+      const r = await window.pill.testAction(action);
+      UI.setTestBusy(false);
+      if (r?.ok) UI.setStatus(action === "paste" ? "Pegado (Ctrl+V) ✓" : "Tecleado ✓");
+      else UI.setError("Falló: " + (r?.error || "desconocido"));
+    },
+  });
 
-  if (action === "show") {
-    setStatus("Listo.");
-    return;
-  }
-  if (action === "paste") {
-    const r = await window.pill.paste(text);
-    setStatus(r?.ok ? "Pegado (Ctrl+V) ✓" : "No se pudo pegar");
-    if (!r?.ok) setError(r?.error || "Error al pegar");
-    return;
-  }
-  if (action === "type") {
-    setStatus("Tecleando…");
-    const r = await window.pill.type(text);
-    setStatus(r?.ok ? "Tecleado ✓" : "No se pudo teclear");
-    if (!r?.ok) setError(r?.error || "Error al teclear");
-    return;
-  }
-}
+  // ---- Push-to-talk global (desde el main vía uiohook) ----
+  // mantener = grabar, soltar = transcribir/traducir. A prueba de cruces: si ya hay
+  // grabación, se ignora otro DOWN; y solo corta el UP cuyo modo coincide con el que
+  // inició la grabación (no se mezcla español con inglés).
+  let activeMode = null;
+  window.pill.onPttDown((mode) => {
+    if (UI.isConfigOpen() || TR.isRecording()) return;
+    activeMode = mode;
+    TR.start(mode);
+  });
+  window.pill.onPttUp((mode) => {
+    if (UI.isConfigOpen() || !TR.isRecording()) return;
+    if (mode && mode !== activeMode) return;
+    TR.stop();
+  });
 
-// ---------------------------------------------------------------------------
-// Eventos
-// ---------------------------------------------------------------------------
-recBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); startRecording(); });
-recBtn.addEventListener("pointerup",   (e) => { e.preventDefault(); stopRecording(); });
-recBtn.addEventListener("pointerleave", () => { if (isRecording) stopRecording(); });
-recBtn.addEventListener("contextmenu", (e) => e.preventDefault());
-
-configBtn.addEventListener("click", toggleConfig);
-closeBtn.addEventListener("click", () => window.pill?.close());
-cfgSave.addEventListener("click", saveConfig);
-
-// Modo prueba: dispara la acción elegida con texto fijo (sin gastar API).
-cfgTest.addEventListener("click", async () => {
-  const action = cfgAction.value; // "show" | "paste" | "type"
-  if (action === "show") {
-    setResult("Prueba VozLibre: áéíóú ñÑ ¿Está? ¡Sí! 123");
-    setStatus('Acción "Solo mostrar": el texto aparece acá ✓');
-    return;
-  }
-  // Cerramos la config para soltar el foco y que el tecleo caiga en tu app.
-  if (configOpen) toggleConfig();
-  cfgTest.disabled = true;
-  setStatus("Enfocá tu app… (1,5 s)");
-  const r = await window.pill.testAction(action);
-  cfgTest.disabled = false;
-  if (r?.ok) setStatus(action === "paste" ? "Pegado (Ctrl+V) ✓" : "Tecleado ✓");
-  else { pillEl.classList.add("has-result"); setError("Falló: " + (r?.error || "desconocido")); }
-});
-
-copyBtn.addEventListener("click", async () => {
-  await window.pill.copyToClipboard(result.textContent);
-  const orig = copyBtn.textContent;
-  copyBtn.textContent = "✅ Copiado";
-  setTimeout(() => { copyBtn.textContent = orig; }, 1400);
-});
-clearBtn.addEventListener("click", () => { setResult(""); setStatus(""); });
-
-// Atajos globales PUSH-TO-TALK: mantener = grabar, soltar = transcribir/traducir.
-// mode "transcribe" (idioma config) | "translate" (→ inglés).
-// Con la config abierta se ignoran (además el main ya desactiva los hooks): así
-// no se activa la grabación al setear el atajo presionando la misma combinación.
-//
-// A PRUEBA DE CRUCES: los dos atajos pueden compartir tecla (p.ej. Super+/ y
-// Control+Super+/). Si ya hay una grabación en curso, ignoramos cualquier nuevo
-// DOWN; y solo cortamos con el UP cuyo MODO coincide con el que inició la
-// grabación. Así nunca se mezcla "español" con "inglés".
-window.pill.onPttDown((mode) => {
-  if (configOpen || isRecording) return;
-  startRecording(mode);
-});
-window.pill.onPttUp((mode) => {
-  if (configOpen || !isRecording) return;
-  if (mode && mode !== recordMode) return; // UP de otro atajo: ignorar
-  stopRecording();
-});
-
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-window.addEventListener("DOMContentLoaded", async () => {
-  setupShortcutCapture();
-  settings = await window.pill.loadSettings();
-  refreshLayout();
-});
+  // ---- Init ----
+  window.addEventListener("DOMContentLoaded", async () => {
+    UI.bindEvents();
+    settings = await window.pill.loadSettings();
+    UI.refreshLayout();
+  });
+})();
