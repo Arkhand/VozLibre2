@@ -41,6 +41,7 @@
     onError: (m) => UI.setError(m),
     onText: (text) => applyAction(text),
     onRecordingChange: (on) => UI.setRecordingUI(on),
+    onLevel: (level, voice) => UI.setAudioLevel(level, voice),
   });
 
   // ---- Conectar la UI con el resto ----

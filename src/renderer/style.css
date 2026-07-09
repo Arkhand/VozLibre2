@@ -113,6 +113,38 @@ html, body {
 @keyframes pulse { 50% { box-shadow: 0 0 0 11px rgba(244, 63, 94, 0.06), 0 0 24px var(--rec-glow); } }
 .orb:disabled { opacity: .55; cursor: not-allowed; }
 
+/* ----- Medidor de audio en vivo (mientras se graba) -----
+   --level (0..1) lo actualiza el renderer en cada frame con el volumen del micro.
+   El anillo ::after crece con el nivel: si NO llega, el anillo casi no se mueve y
+   el usuario ve que el micro no capta nada. Con voz (.voice) el orbe se pone VERDE;
+   en silencio, rojo. Así se distingue "micro apagado/mudo" de "micro captando voz". */
+.orb.recording {
+  --level: 0;
+  /* Al medir volumen, suspendemos el pulso automático: el "latido" ahora lo da la voz. */
+  animation: none;
+  /* El propio orbe crece un poco con el volumen (feedback inmediato). */
+  transform: scale(calc(1 + var(--level) * 0.14));
+  transition: transform .06s linear, box-shadow .12s linear, background .18s ease;
+}
+.orb.recording::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  /* El anillo se expande con el nivel: de 4px (silencio) hasta ~16px (fuerte). */
+  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(244, 63, 94, 0.28);
+  transition: box-shadow .06s linear;
+}
+/* Con voz detectada: verde. Confirma que el micro capta tu voz de verdad. */
+.orb.recording.voice {
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.28), 0 0 22px rgba(34, 197, 94, 0.55);
+}
+.orb.recording.voice::after {
+  box-shadow: 0 0 0 calc(4px + var(--level) * 14px) rgba(34, 197, 94, 0.35);
+}
+
 /* Centro (status + timer): OCULTO en reposo, visible solo cuando hay actividad. */
 .bar-center {
   flex: 1 1 auto;

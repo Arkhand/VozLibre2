@@ -32,6 +32,7 @@
     onError: () => {},             // (msg) error visible
     onText: () => {},              // (text, mode) texto reconocido -> aplicar acción
     onRecordingChange: () => {},   // (bool) para que la UI prenda/apague el orbe y timer
+    onLevel: () => {},             // (level 0..1, voice bool) nivel de audio en vivo
   };
   function configure(callbacks) { cb = { ...cb, ...callbacks }; }
 
@@ -64,7 +65,12 @@
         analyser.getFloatTimeDomainData(buf);
         let sum = 0;
         for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-        if (Math.sqrt(sum / buf.length) > SILENCE_THRESHOLD) hadVoice = true;
+        const rms = Math.sqrt(sum / buf.length);
+        const voice = rms > SILENCE_THRESHOLD;
+        if (voice) hadVoice = true;
+        // Nivel normalizado a 0..1 para la UI. El RMS de voz normal ronda 0.02–0.2,
+        // así que escalamos por ~6x y recortamos; queda un medidor que "responde".
+        cb.onLevel(Math.min(1, rms * 6), voice);
         volRaf = requestAnimationFrame(tick);
       };
       tick();
@@ -75,6 +81,7 @@
     volRaf = null;
     if (audioCtx) { try { audioCtx.close(); } catch {} }
     audioCtx = null; analyser = null;
+    cb.onLevel(0, false); // apagar el medidor al parar
   }
 
   async function start(mode = "transcribe") {

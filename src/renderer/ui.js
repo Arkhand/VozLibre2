@@ -95,7 +95,16 @@
   // Reflejar el estado de grabación en el orbe + timer.
   function setRecordingUI(on) {
     el.recBtn.classList.toggle("recording", on);
-    if (on) startTimer(); else stopTimer();
+    if (on) startTimer(); else { stopTimer(); setAudioLevel(0, false); }
+  }
+
+  // Medidor de audio en vivo: mientras se graba, el orbe "late" con el volumen y
+  // cambia de color según detecte voz (verde) o silencio (rojo). Así el usuario
+  // sabe de un vistazo si el micrófono está captando algo. Se llama muchas veces
+  // por segundo (rAF), así que solo tocamos estilos baratos (variable CSS + clase).
+  function setAudioLevel(level, voice) {
+    el.recBtn.style.setProperty("--level", level.toFixed(3));
+    el.recBtn.classList.toggle("voice", !!voice);
   }
   function getResultText() { return el.result.textContent; }
   function isConfigOpen() { return configOpen; }
@@ -272,7 +281,7 @@
 
   window.VLUI = {
     configure, bindEvents, refreshLayout,
-    setStatus, setError, setResult, setRecordingUI,
+    setStatus, setError, setResult, setRecordingUI, setAudioLevel,
     getResultText, isConfigOpen, toggleConfig,
     closeConfig, requestCloseConfig, isDirty, clearDirty,
     loadConfigIntoUI, readConfigForm, flashSaved,
