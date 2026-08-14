@@ -25,6 +25,7 @@
         <span class="timer" id="timer">00:00</span>
       </div>
 
+      <button class="icon-btn" id="fileBtn" title="Transcribir un audio (.ogg de WhatsApp, .mp3, .m4a…)">📎</button>
       <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
       <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)">✕</button>
     </div>
@@ -106,6 +107,14 @@
           <button class="sec danger" id="cfgConfirmDiscard">Salir sin guardar</button>
         </div>
       </div>
+    </div>
+
+    <!-- Capa de "soltá el audio acá": se muestra al arrastrar un archivo sobre
+         la píldora. Cubre toda la píldora y no intercepta eventos (pointer-events
+         none) para que el dragleave del contenedor no se dispare de más. -->
+    <div class="drop-overlay" id="dropOverlay">
+      <span class="drop-icon">🎧</span>
+      <span class="drop-text">Soltá el audio para transcribirlo</span>
     </div>
   </div>
 

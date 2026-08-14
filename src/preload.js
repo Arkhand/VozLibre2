@@ -5,7 +5,18 @@
  * (paste/type/clipboard), atajo global y el evento de toggle por atajo.
  */
 
-const { contextBridge, ipcRenderer } = require("electron");
+const electron = require("electron");
+const { contextBridge, ipcRenderer } = electron;
+
+// Ruta en disco de un archivo soltado (drag & drop). Hasta Electron 31 alcanzaba
+// con File.path; desde la 32 hay que pedirla por webUtils. Soportamos las dos para
+// que actualizar Electron no rompa el drop.
+function filePathOf(file) {
+  try {
+    if (electron.webUtils?.getPathForFile) return electron.webUtils.getPathForFile(file);
+  } catch { /* seguimos con File.path */ }
+  return file?.path || "";
+}
 
 contextBridge.exposeInMainWorld("pill", {
   // Ventana
@@ -26,6 +37,18 @@ contextBridge.exposeInMainWorld("pill", {
 
   // Modo prueba: dispara la acción con texto fijo (sin gastar API).
   testAction: (action) => ipcRenderer.invoke("test:action", action),
+
+  // Audio desde archivo: diálogo nativo (📎) y lectura por ruta (drag & drop).
+  // Ambos resuelven {ok, name, ext, bytes} | {ok:false, error|canceled}.
+  pickAudio: () => ipcRenderer.invoke("audio:pick"),
+  readAudio: (filePath) => ipcRenderer.invoke("audio:read", filePath),
+  // Resuelve la ruta de un File soltado y lo lee de una (el renderer no puede
+  // sacar la ruta por su cuenta con contextIsolation).
+  readDroppedAudio: (file) => {
+    const p = filePathOf(file);
+    if (!p) return Promise.resolve({ ok: false, error: "Arrastrá el archivo desde una carpeta del disco." });
+    return ipcRenderer.invoke("audio:read", p);
+  },
 
   // Atajo global
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),

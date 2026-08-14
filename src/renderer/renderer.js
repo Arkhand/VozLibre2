@@ -14,12 +14,15 @@
   let settings = {};
 
   // ---- Aplicar la acción configurada al texto reconocido ----
-  async function applyAction(text) {
+  // fromFile: el audio venía de un archivo (📎 o drag & drop). En ese caso NUNCA
+  // se aplica pegar/teclear: estás mirando la píldora, no la app de atrás, así que
+  // escribirle a esa ventana sería una sorpresa fea. El texto queda a un clic de 📋.
+  async function applyAction(text, fromFile = false) {
     if (!text) { UI.setStatus(""); UI.setError("No se reconoció texto."); return; }
-    const action = settings.action || "show";
+    const action = fromFile ? "show" : (settings.action || "show");
     UI.setResult(text); // siempre mostramos el texto como referencia
 
-    if (action === "show") { UI.setStatus("Listo."); return; }
+    if (action === "show") { UI.setStatus(fromFile ? "Listo — copiá el texto con 📋" : "Listo."); return; }
     if (action === "paste") {
       const r = await window.pill.paste(text);
       UI.setStatus(r?.ok ? "Pegado (Ctrl+V) ✓" : "No se pudo pegar");
@@ -34,12 +37,29 @@
     }
   }
 
+  // ---- Audio desde archivo (📎 o drag & drop) ----
+  // Recibe lo que devuelve el main ({ok, name, ext, bytes} | {ok:false, ...}) y lo
+  // manda a transcribir. transcribeFile marca el origen, así que el resultado se
+  // muestra sin aplicar pegar/teclear (ver applyAction).
+  async function transcribeFromFileResult(r) {
+    if (!r || r.canceled) return;
+    if (!r.ok) { UI.setError(r.error || "No se pudo abrir el archivo."); UI.setStatus(""); return; }
+    UI.setFileBusy(true);
+    UI.setError("");
+    UI.setStatus(`Leyendo ${r.name}…`);
+    try {
+      await TR.transcribeFile(r.bytes, r.ext, "transcribe");
+    } finally {
+      UI.setFileBusy(false);
+    }
+  }
+
   // ---- Conectar Transcription con la UI ----
   TR.configure({
     getSettings: () => settings,
     onStatus: (m) => UI.setStatus(m),
     onError: (m) => UI.setError(m),
-    onText: (text) => applyAction(text),
+    onText: (text, _mode, opts) => applyAction(text, !!opts?.fromFile),
     onRecordingChange: (on) => UI.setRecordingUI(on),
     onLevel: (level, voice) => UI.setAudioLevel(level, voice),
   });
@@ -61,6 +81,14 @@
       UI.flashSaved();
       UI.clearDirty();    // cambios ya persistidos: no preguntar al cerrar
       UI.closeConfig();   // guardar cierra el panel de config
+    },
+    onPickFile: async () => {
+      const r = await window.pill.pickAudio();
+      await transcribeFromFileResult(r);
+    },
+    onDropFile: async (file) => {
+      const r = await window.pill.readDroppedAudio(file);
+      await transcribeFromFileResult(r);
     },
     onCopy: async (text) => {
       await window.pill.copyToClipboard(text);

@@ -10,6 +10,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     pill: $("pill"), recBtn: $("recBtn"), configBtn: $("configBtn"), closeBtn: $("closeBtn"),
+    fileBtn: $("fileBtn"),
     barCenter: $("barCenter"), status: $("status"), timer: $("timer"),
     result: $("result"), copyBtn: $("copyBtn"), clearBtn: $("clearBtn"), err: $("err"),
     // Config
@@ -37,6 +38,8 @@
     onConfigOpen: () => {},     // (bool) abrir/cerrar config (foco, atajos)
     onTest: () => {},           // (action) probar acción
     onCopy: () => {},           // (text)
+    onPickFile: () => {},       // clic en 📎 -> abrir diálogo nativo
+    onDropFile: () => {},       // (File) archivo soltado sobre la píldora
     isRecording: () => false,
   };
   function configure(callbacks) { cb = { ...cb, ...callbacks }; }
@@ -277,6 +280,51 @@
 
     attachShortcutCapture(el.cfgShortcut, (b) => { bindTranscribe = b; markDirty(); });
     attachShortcutCapture(el.cfgShortcutTranslate, (b) => { bindTranslate = b; markDirty(); });
+
+    el.fileBtn.addEventListener("click", () => cb.onPickFile());
+    bindDropZone();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drag & drop de un audio sobre la píldora
+  // ---------------------------------------------------------------------------
+  // dragenter/dragleave se disparan también al pasar entre hijos, así que llevamos
+  // un contador de "entradas" y solo apagamos el overlay cuando vuelve a 0.
+  let dragDepth = 0;
+  function setDropping(on) {
+    el.pill.classList.toggle("dropping", !!on);
+    refreshLayout();
+  }
+
+  function bindDropZone() {
+    // Sin preventDefault en dragover, Chromium no permite el drop.
+    const allow = (e) => { e.preventDefault(); e.stopPropagation(); };
+
+    window.addEventListener("dragenter", (e) => {
+      allow(e);
+      dragDepth++;
+      if (!configOpen) setDropping(true);
+    });
+    window.addEventListener("dragover", (e) => {
+      allow(e);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    window.addEventListener("dragleave", (e) => {
+      allow(e);
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setDropping(false);
+    });
+    window.addEventListener("drop", (e) => {
+      allow(e);
+      dragDepth = 0;
+      setDropping(false);
+      if (configOpen) return;
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      // El preload resuelve la ruta real en disco (el renderer no puede con
+      // contextIsolation) y pide al main que lo lea.
+      cb.onDropFile(file);
+    });
   }
 
   window.VLUI = {
@@ -288,5 +336,7 @@
     // helper para el test "solo mostrar"
     cfgActionValue: () => el.cfgAction.value,
     setTestBusy: (busy) => { el.cfgTest.disabled = busy; },
+    // 📎 deshabilitado mientras se sube/transcribe un archivo (evita dobles envíos).
+    setFileBusy: (busy) => { el.fileBtn.disabled = busy; el.fileBtn.classList.toggle("busy", !!busy); },
   };
 })();

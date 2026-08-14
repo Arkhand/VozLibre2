@@ -191,8 +191,36 @@ html, body {
   transition: background .15s ease, color .15s ease, transform .15s ease;
 }
 .icon-btn:hover { background: rgba(129, 102, 241, 0.18); color: var(--text); }
+.icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+.icon-btn:disabled:hover { background: transparent; color: var(--muted); }
+/* 📎 mientras sube/transcribe: latido suave para que se note que está trabajando. */
+.icon-btn.busy { animation: iconBusy 1s ease-in-out infinite; }
+@keyframes iconBusy { 50% { opacity: .9; transform: scale(1.12); } }
 #closeBtn:hover { background: rgba(244, 63, 94, 0.18); color: #ffd9df; }
 #configBtn.active { background: rgba(129, 102, 241, 0.25); color: #fff; transform: rotate(45deg); }
+
+/* ----- Soltar un audio sobre la píldora (drag & drop) -----
+   Overlay que tapa toda la píldora mientras arrastrás un archivo encima. Con
+   pointer-events:none no roba los eventos de drag al contenedor (si los robara,
+   entrar al overlay dispararía un dragleave y el overlay parpadearía). */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+  background: linear-gradient(160deg, rgba(99, 102, 241, 0.92), rgba(168, 85, 247, 0.92));
+  border-radius: inherit;
+}
+.pill.dropping .drop-overlay { display: flex; }
+.drop-icon { font-size: 22px; line-height: 1; }
+.drop-text { font-size: 13px; font-weight: 600; color: #fff; }
+/* Mientras se arrastra, la píldora compacta se agranda para dar un blanco cómodo. */
+.pill.dropping { min-height: 76px; }
 
 /* ----- Paneles ----- */
 .panel {

@@ -16,6 +16,13 @@
   // Umbral de silencio (RMS normalizado): por debajo se considera ruido de fondo.
   const SILENCE_THRESHOLD = 0.012;
 
+  // MIME por extensión, para los audios que llegan desde un archivo.
+  const MIME_BY_EXT = {
+    ogg: "audio/ogg", opus: "audio/ogg", oga: "audio/ogg",
+    m4a: "audio/mp4", mp4: "audio/mp4", mp3: "audio/mpeg", mpga: "audio/mpeg", mpeg: "audio/mpeg",
+    wav: "audio/wav", webm: "audio/webm", flac: "audio/flac",
+  };
+
   let stream = null;
   let mediaRecorder = null;
   let chunks = [];
@@ -121,11 +128,29 @@
     await sendToGroq(blob, recordMode);
   }
 
-  async function sendToGroq(blob, mode) {
+  // Transcribe un audio que YA existe (archivo elegido con 📎 o soltado en la
+  // píldora). Salta la grabación y el detector de silencio: el usuario eligió el
+  // archivo a propósito, así que se manda tal cual por el mismo camino que el micro.
+  //   bytes: Uint8Array del archivo | ext: extensión real ("ogg", "m4a", …)
+  async function transcribeFile(bytes, ext, mode = "transcribe") {
+    if (recording) { cb.onError("Esperá a que termine la grabación en curso."); return; }
+    const s = cb.getSettings();
+    if (!s.groqApiKey) { cb.onError("⚠️ Falta tu API key de Groq. Abrí ⚙ y pegala."); return; }
+    // El tipo MIME solo orienta al servidor; el nombre con la extensión real es lo
+    // que Whisper usa para decidir el decoder, y ese lo fijamos en sendToGroq.
+    const blob = new Blob([bytes], { type: MIME_BY_EXT[ext] || "application/octet-stream" });
+    await sendToGroq(blob, mode, ext, true /* fromFile */);
+  }
+
+  // forceExt: extensión real cuando el audio viene de un archivo (el blob grabado
+  // no la trae y hay que deducirla del mimeType del MediaRecorder).
+  // fromFile: el audio venía de un archivo, no del micrófono. Viaja hasta onText
+  // para que el orquestador no aplique pegar/teclear sobre la app de atrás.
+  async function sendToGroq(blob, mode, forceExt, fromFile = false) {
     const s = cb.getSettings();
     const translate = mode === "translate";
     cb.onStatus(translate ? "Traduciendo a inglés con Groq…" : "Transcribiendo con Groq…");
-    const ext = blob.type.includes("ogg") ? "ogg" : "webm";
+    const ext = forceExt || (blob.type.includes("ogg") ? "ogg" : "webm");
     const form = new FormData();
     form.append("file", blob, "audio." + ext);
     form.append("model", MODEL);
@@ -142,12 +167,15 @@
       });
       if (!res.ok) throw new Error("HTTP " + res.status + " — " + (await res.text()));
       const data = await res.json();
-      cb.onText((data.text || "").trim(), mode);
+      // await: onText aplica la acción (pegar/teclear) y puede tardar. Esperarlo
+      // hace que sendToGroq no resuelva antes de que la acción termine, para que
+      // quien llama sepa cuándo terminó de verdad todo el flujo.
+      await cb.onText((data.text || "").trim(), mode, { fromFile });
     } catch (e) {
       cb.onError("Error: " + e.message);
       cb.onStatus("");
     }
   }
 
-  window.VLTranscription = { configure, start, stop, isRecording, releaseStream };
+  window.VLTranscription = { configure, start, stop, isRecording, releaseStream, transcribeFile };
 })();
