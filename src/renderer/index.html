@@ -26,6 +26,8 @@
       </div>
 
       <button class="icon-btn" id="fileBtn" title="Transcribir un audio o video (.ogg de WhatsApp, .mp4, .mp3…)">📎</button>
+      <button class="icon-btn" id="meetBtn" title="Grabar una reunión (Teams, Zoom, Meet…)">🎙️</button>
+      <button class="icon-btn" id="historyBtn" title="Historial de transcripciones">🕘</button>
       <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
       <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)">✕</button>
     </div>
@@ -37,7 +39,47 @@
         <button class="sec" id="copyBtn" disabled>📋 Copiar</button>
         <button class="sec" id="clearBtn" disabled>🗑️ Limpiar</button>
       </div>
+      <!-- Dónde quedó guardado el .md (aparece tras transcribir un archivo). -->
+      <div class="saved-path" id="savedPath" hidden></div>
       <div class="err" id="err"></div>
+    </div>
+
+    <!-- Panel de REUNIÓN EN CURSO: indicador rojo latiendo, cronómetro y medidores
+         por pista, para saber de un vistazo que está grabando y que entra audio. -->
+    <div class="panel meeting" id="meetPanel">
+      <div class="meet-head">
+        <span class="meet-dot" id="meetDot"></span>
+        <span class="meet-state" id="meetState">Grabando reunión</span>
+        <span class="meet-timer" id="meetTimer">00:00</span>
+      </div>
+      <div class="meet-tracks">
+        <div class="meet-track">
+          <span class="meet-label">🔊 Reunión</span>
+          <div class="meet-bar"><div class="meet-fill" id="meetLvlSys"></div></div>
+        </div>
+        <div class="meet-track">
+          <span class="meet-label">🎤 Yo</span>
+          <div class="meet-bar"><div class="meet-fill" id="meetLvlMic"></div></div>
+        </div>
+      </div>
+      <p class="meet-note" id="meetNote">Se transcribe por partes mientras grabás.</p>
+      <div class="panel-foot">
+        <button class="sec danger" id="meetStop">⏹ Detener y transcribir</button>
+      </div>
+    </div>
+
+    <!-- Panel de HISTORIAL (se abre con 🕘). Lista los .md ya transcriptos. -->
+    <div class="panel history" id="historyPanel">
+      <div class="hist-head">
+        <span class="hist-title">Transcripciones guardadas</span>
+        <button class="sec tiny" id="histFolderBtn" title="Abrir la carpeta">📂 Carpeta</button>
+      </div>
+      <div class="hist-list" id="histList"></div>
+      <div class="panel-foot">
+        <button class="sec" id="histClose">Cerrar</button>
+        <button class="sec danger" id="histClear">Vaciar lista</button>
+      </div>
+      <small class="cfg-hint">"Vaciar lista" borra el historial de la píldora, no los archivos .md del disco.</small>
     </div>
 
     <!-- Progreso de la conversión con ffmpeg (archivos largos / video). -->
@@ -60,7 +102,7 @@
       <div class="cfg-field">
         <label for="cfgLang">Idioma del audio</label>
         <select id="cfgLang">
-          <option value="">Detectar automáticamente</option>
+          <option value="">Detectar automáticamente (recomendado)</option>
           <option value="es">Español</option>
           <option value="en">Inglés</option>
           <option value="pt">Portugués</option>
@@ -71,6 +113,33 @@
           <option value="gl">Gallego</option>
           <option value="eu">Euskera</option>
         </select>
+        <small class="cfg-hint">Fijar un idioma no es una pista: es una orden. Si el audio está en otro idioma, Whisper lo <strong>traduce</strong> en vez de transcribirlo literal. Dejalo en automático salvo que quieras justamente eso.</small>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-check">
+          <input type="checkbox" id="cfgFormat">
+          <span>Dar formato al texto con Claude (Markdown)</span>
+        </label>
+        <small class="cfg-hint" id="cfgFormatHint">Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.</small>
+        <label class="cfg-check sub">
+          <input type="checkbox" id="cfgTimestamps">
+          <span>Encabezados con marca de tiempo por tramo</span>
+        </label>
+        <small class="cfg-hint">Solo en audios largos que se cortan en partes.</small>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-check">
+          <input type="checkbox" id="cfgSaveHistory">
+          <span>Guardar un .md por cada archivo transcripto</span>
+        </label>
+        <small class="cfg-hint">Solo para archivos (📎 y drag &amp; drop). El dictado con atajo no se guarda.</small>
+        <label for="cfgFolder">Carpeta de las transcripciones</label>
+        <div class="cfg-row">
+          <input type="text" id="cfgFolder" readonly placeholder="Documentos\VozLibre">
+          <button class="sec" id="cfgFolderBtn">📂 Elegir…</button>
+        </div>
       </div>
 
       <div class="cfg-field">
@@ -149,6 +218,7 @@
        tras parsear el DOM. -->
   <script src="ui.js" defer></script>
   <script src="transcription.js" defer></script>
+  <script src="meeting.js" defer></script>
   <script src="renderer.js" defer></script>
 </body>
 </html>

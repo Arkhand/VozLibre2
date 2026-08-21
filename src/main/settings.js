@@ -19,7 +19,11 @@ const fs = require("fs");
 // choques). Se re-asignan desde el panel de config (captura nativa).
 const DEFAULTS = {
   groqApiKey: "",
-  lang: "es",            // idioma del audio ("" = autodetectar)
+  // Idioma del audio. "" = autodetectar (Whisper lo deduce del audio).
+  // Ojo: fijar un idioma acá no solo "ayuda" a Whisper, le ORDENA la salida en ese
+  // idioma: con lang="es" un audio en inglés vuelve TRADUCIDO al español. Por eso
+  // el default es autodetectar, y el idioma fijo queda para quien lo necesite.
+  lang: "",
   deviceId: "",          // micrófono elegido ("" = el por defecto del sistema)
   action: "show",        // qué hacer con el texto: "show" | "paste" | "type"
   shortcut: { keycode: 66, ctrl: false, shift: false, alt: false, meta: false },          // F8: dictar
@@ -29,7 +33,26 @@ const DEFAULTS = {
   // todos los tiers y deja los trozos bien por debajo de los 25 MB. Subirlo
   // manda menos pedidos (más rápido) pero arriesga rechazos de la API.
   chunkMinutes: 10,
+
+  // ---- Formateo a Markdown (Claude CLI) ----
+  // Pasa la transcripción cruda por `claude -p` para que salga con puntuación y
+  // párrafos en vez de un bloque corrido. null = "no elegido todavía": al arrancar
+  // se resuelve a true si el CLI está instalado (ver resolveFormatDefault).
+  formatMarkdown: null,
+  // Encabezados "### [mm:ss]" por tramo en los archivos largos. Solo aplica a
+  // archivos partidos en varias partes: en un audio corto no hay tramos que marcar.
+  formatTimestamps: true,
+
+  // ---- Historial de archivos ----
+  // Guardar un .md por cada archivo transcripto. No aplica al push-to-talk.
+  saveHistory: true,
+  // Carpeta destino de los .md. "" = Documentos\VozLibre (ver history.defaultFolder).
+  historyFolder: "",
 };
+
+// Versión del esquema de settings. Sube cuando hay que migrar un settings.json
+// viejo (ver migrate).
+const SCHEMA_VERSION = 2;
 
 function settingsPath() {
   // userData: ruta por-usuario fija y persistente que Electron crea/gestiona
@@ -37,14 +60,32 @@ function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
+/* Adapta un settings.json viejo al esquema actual.
+ *
+ * v1 -> v2: el default de `lang` era "es" y se mandaba SIEMPRE a Whisper como
+ * parámetro `language`, así que un audio en inglés volvía traducido al español sin
+ * que nadie lo hubiera pedido. Quien tenga "es" guardado lo tiene porque era el
+ * default, no porque lo eligiera: pasa a "" (autodetectar). Un idioma elegido a
+ * mano (cualquier otro) se respeta.
+ */
+function migrate(data) {
+  const from = typeof data.schemaVersion === "number" ? data.schemaVersion : 1;
+  if (from >= SCHEMA_VERSION) return data;
+
+  const next = { ...data };
+  if (from < 2 && next.lang === "es") next.lang = "";
+  next.schemaVersion = SCHEMA_VERSION;
+  return next;
+}
+
 function load() {
   try {
     const raw = fs.readFileSync(settingsPath(), "utf8");
-    const data = JSON.parse(raw);
+    const data = migrate(JSON.parse(raw));
     // Mezclar con defaults para tolerar settings.json viejos/incompletos.
     return { ...DEFAULTS, ...data };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, schemaVersion: SCHEMA_VERSION };
   }
 }
 
@@ -58,4 +99,17 @@ function save(partial) {
   return next;
 }
 
-module.exports = { load, save, settingsPath, DEFAULTS };
+/* Resuelve el default de formatMarkdown la primera vez: prendido si Claude CLI
+ * está instalado, apagado si no. Se llama una vez al arrancar (main.js).
+ *
+ * Queda persistido para que la decisión no cambie sola: si el usuario lo apagó a
+ * mano, instalar/desinstalar el CLI después no debe volver a prenderlo. Solo el
+ * valor null (nunca resuelto) se toca acá.
+ */
+function resolveFormatDefault(cliAvailable) {
+  const current = load();
+  if (current.formatMarkdown !== null && current.formatMarkdown !== undefined) return current;
+  return save({ formatMarkdown: !!cliAvailable });
+}
+
+module.exports = { load, save, settingsPath, resolveFormatDefault, DEFAULTS, SCHEMA_VERSION };

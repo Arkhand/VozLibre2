@@ -5,7 +5,7 @@
  * Se llama una vez desde main.js (registerIpc).
  */
 
-const { ipcMain, clipboard, dialog } = require("electron");
+const { ipcMain, clipboard, dialog, shell, session, desktopCapturer } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -14,6 +14,8 @@ const hotkeys = require("./hotkeys");
 const typing = require("./typing");
 const windowMod = require("./window");
 const audio = require("./audio");
+const format = require("./format");
+const history = require("./history");
 
 // Formatos que acepta Whisper de Groq. .ogg/.opus son los de las notas de voz de
 // WhatsApp; el resto entra igual porque el endpoint los soporta.
@@ -219,6 +221,137 @@ function registerIpc() {
     available: audio.isAvailable(),
     hint: audio.INSTALL_HINT,
   }));
+
+  // ---- Captura del audio del sistema (grabar reuniones) ----
+  // Cuando el renderer llama a getDisplayMedia, Electron pregunta acá qué entregar.
+  // Se responde con audio "loopback": lo que la PC REPRODUCE (Teams, Zoom, Meet…),
+  // que es la pista de "los demás".
+  //
+  // Se entrega también una fuente de video porque Windows no da el loopback sin
+  // ella; el renderer descarta el video apenas llega (ver meeting.js:abrirSistema).
+  // Nada de la pantalla se graba ni sale de la máquina.
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      desktopCapturer
+        .getSources({ types: ["screen"] })
+        .then((sources) => {
+          if (!sources.length) return callback({});
+          callback({ video: sources[0], audio: "loopback" });
+        })
+        .catch(() => callback({}));
+    },
+    // useSystemPicker false: elegimos la pantalla nosotros, sin diálogo de Windows.
+    // El usuario ya decidió al tocar "grabar reunión"; un selector más sería ruido.
+    { useSystemPicker: false }
+  );
+
+  // ---- Formateo a Markdown (Claude CLI) ----
+  // Whisper devuelve texto corrido; esto lo convierte en Markdown legible. Corre en
+  // el main porque necesita spawn de un proceso (el renderer no puede).
+  ipcMain.handle("format:status", () => ({
+    available: format.isAvailable(),
+    hint: format.INSTALL_HINT,
+  }));
+
+  // Re-chequea el CLI (por si lo instalaste con VozLibre abierto).
+  ipcMain.handle("format:recheck", () => {
+    format.resetCliCache();
+    return { available: format.isAvailable(), hint: format.INSTALL_HINT };
+  });
+
+  ipcMain.handle("format:transcript", async (e, payload) => {
+    const parts = Array.isArray(payload?.parts) ? payload.parts : [];
+    if (!parts.length) return { ok: false, error: "No hay texto para formatear." };
+
+    const send = (payload2) => {
+      if (!e.sender.isDestroyed()) e.sender.send("format:progress", payload2);
+    };
+    return format.formatTranscript(parts, {
+      language: payload.language || "",
+      showTimestamps: !!payload.showTimestamps,
+      silences: Array.isArray(payload.silences) ? payload.silences : [],
+      onProgress: (i, total) => send({ index: i, total }),
+    });
+  });
+
+  // ---- Historial de transcripciones de archivo ----
+  ipcMain.handle("history:save", (_e, payload) => {
+    const cfg = settings.load();
+    return history.save({
+      folder: cfg.historyFolder || history.defaultFolder(),
+      // "meeting" -> subcarpeta Reuniones/; cualquier otra cosa -> raíz.
+      kind: payload?.kind === "meeting" ? "meeting" : "file",
+      sourceName: payload?.sourceName || "",
+      duration: payload?.duration || 0,
+      language: payload?.language || "",
+      text: payload?.text || "",
+      formatted: !!payload?.formatted,
+      partial: !!payload?.partial,
+      failedCount: payload?.failedCount || 0,
+      formatError: payload?.formatError || "",
+    });
+  });
+
+  ipcMain.handle("history:list", () => ({ ok: true, entries: history.list() }));
+  ipcMain.handle("history:read", (_e, id) => history.read(id));
+  ipcMain.handle("history:remove", (_e, id, alsoFile) => history.remove(id, !!alsoFile));
+  ipcMain.handle("history:clear", () => history.clear());
+
+  // Abre el .md (o su carpeta) con la app por defecto del sistema.
+  ipcMain.handle("history:open", async (_e, id) => {
+    const entry = history.list().find((x) => x.id === id);
+    if (!entry) return { ok: false, error: "Entrada no encontrada." };
+    if (entry.missing) return { ok: false, error: `El archivo ya no está en ${entry.path}` };
+    const err = await shell.openPath(entry.path);
+    return err ? { ok: false, error: err } : { ok: true };
+  });
+
+  ipcMain.handle("history:reveal", (_e, id) => {
+    const entry = history.list().find((x) => x.id === id);
+    if (!entry) return { ok: false, error: "Entrada no encontrada." };
+    shell.showItemInFolder(entry.path);
+    return { ok: true };
+  });
+
+  // Carpeta donde se guardan los .md: la elige el usuario con un diálogo nativo.
+  ipcMain.handle("history:folder", () => ({
+    ok: true,
+    folder: settings.load().historyFolder || history.defaultFolder(),
+    isDefault: !settings.load().historyFolder,
+  }));
+
+  // Abre en el explorador la carpeta donde se guardan los .md.
+  ipcMain.handle("history:open-folder", async () => {
+    const folder = settings.load().historyFolder || history.defaultFolder();
+    try {
+      fs.mkdirSync(folder, { recursive: true }); // puede no existir si nunca guardaste
+    } catch (e) {
+      return { ok: false, error: `No se pudo abrir la carpeta: ${e.message}` };
+    }
+    const err = await shell.openPath(folder);
+    return err ? { ok: false, error: err } : { ok: true, folder };
+  });
+
+  ipcMain.handle("history:pick-folder", async () => {
+    const win = windowMod.get();
+    const wasFocusable = win ? win.isFocusable() : true;
+    if (win && !wasFocusable) windowMod.setFocusable(true);
+    hotkeys.disable();
+    try {
+      const res = await dialog.showOpenDialog(win, {
+        title: "Elegí dónde guardar las transcripciones (.md)",
+        properties: ["openDirectory", "createDirectory"],
+        defaultPath: settings.load().historyFolder || history.defaultFolder(),
+      });
+      if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+      return { ok: true, folder: res.filePaths[0] };
+    } finally {
+      if (win && !wasFocusable) windowMod.setFocusable(false);
+      // La config está abierta cuando se elige carpeta, así que los atajos siguen
+      // desactivados a propósito: los re-activa el cierre de la config.
+      if (!wasFocusable) hotkeys.register(settings.load());
+    }
+  });
 
   // ---- Atajos ----
   ipcMain.handle("shortcut:register", () => hotkeys.register(settings.load()));

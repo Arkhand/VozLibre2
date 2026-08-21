@@ -50,6 +50,22 @@ const SILENCE_MIN_DUR = 0.4;
 // sentido cortar 11 minutos en 10 + 1).
 const SPLIT_MARGIN = 1.2;
 const SPLIT_THRESHOLD_SECONDS = CHUNK_SECONDS * SPLIT_MARGIN;
+
+// ---- Recorte de silencios antes de subir ----
+// Un silencio largo al principio de un trozo hace DEGENERAR a Whisper: un chunk
+// real de 30 s con 9 s de silencio volvió como "y y y y y y y y", y el mismo audio
+// sin ese silencio transcribió perfecto. Además el silencio gasta cuota (se paga
+// por segundo de audio) sin aportar una sola palabra.
+//
+// Se recorta cortando los tramos con voz y pegándolos (atrim + concat), dejando un
+// colchón para no comerse el arranque de las palabras, y se guarda un MAPA para
+// devolver los tiempos a la línea real del audio: sin el mapa, los timestamps del
+// transcript quedarían corridos por todo lo que se sacó.
+const TRIM_KEEP = 0.4;       // silencio que se conserva a cada lado de la voz
+const TRIM_MIN_SILENCE = 1.5; // pausas más cortas no se tocan (respiración normal)
+// Por debajo de esto no vale la pena: reprocesar cuesta más que lo que se ahorra.
+const TRIM_MIN_GAIN = 0.10;   // 10% de la duración
+
 function splitThresholdFor(chunkSeconds) { return chunkSeconds * SPLIT_MARGIN; }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +235,91 @@ async function detectSilences(file) {
   return silences;
 }
 
+/* Tramos con voz a partir de los silencios detectados, con un colchón a cada lado.
+ * Devuelve [{start, end}] en segundos sobre el audio original.
+ *
+ * Se calcula por complemento: lo que NO es un silencio largo, es voz. Solo cuentan
+ * los silencios de al menos TRIM_MIN_SILENCE — las pausas cortas son parte del
+ * habla y sacarlas encadenaría las palabras.
+ */
+function voicedSpans(duration, silences) {
+  const largos = (silences || [])
+    .filter((s) => s.end - s.start >= TRIM_MIN_SILENCE)
+    .sort((a, b) => a.start - b.start);
+  if (!largos.length) return [{ start: 0, end: duration }];
+
+  const spans = [];
+  let cursor = 0;
+  for (const s of largos) {
+    // El colchón se le devuelve a la voz, no al silencio. Ojo: solo hay voz que
+    // proteger si el silencio empieza DESPUÉS del cursor. Un silencio que arranca
+    // en el cursor (típicamente en 0) no tiene nada delante, y sumarle el colchón
+    // dejaría un tramo de puro silencio — justo lo que venimos a sacar.
+    if (s.start > cursor) {
+      spans.push({ start: cursor, end: Math.min(duration, s.start + TRIM_KEEP) });
+    }
+    cursor = Math.max(cursor, Math.min(duration, s.end - TRIM_KEEP));
+    // El silencio llega hasta el final: no queda voz después, así que el colchón
+    // que dejó el cursor sería otro tramo de puro silencio. Cerramos acá.
+    if (s.end >= duration) { cursor = duration; break; }
+  }
+  if (cursor < duration) spans.push({ start: cursor, end: duration });
+
+  // Unir los que quedaron pegados o solapados tras aplicar el colchón.
+  const unidos = [];
+  for (const sp of spans) {
+    const ult = unidos[unidos.length - 1];
+    if (ult && sp.start <= ult.end) ult.end = Math.max(ult.end, sp.end);
+    else if (sp.end > sp.start) unidos.push({ ...sp });
+  }
+  return unidos;
+}
+
+/* Recorta los silencios de un archivo y devuelve {file, mapping, saved} o null si
+ * no vale la pena. `mapping` es [{at, real, len}]: `at` es el tiempo en el archivo
+ * recortado, `real` el tiempo equivalente en el original y `len` cuánto dura ese
+ * tramo — con eso el renderer devuelve cualquier timestamp a la línea real.
+ */
+async function trimSilence(file, duration, silences, outPath) {
+  const spans = voicedSpans(duration, silences);
+  if (!spans.length) return null;
+
+  const conVoz = spans.reduce((acc, s) => acc + (s.end - s.start), 0);
+  if (conVoz <= 0) return null;
+  // Si casi no hay silencio que sacar, no vale reprocesar el archivo.
+  if (duration - conVoz < duration * TRIM_MIN_GAIN) return null;
+
+  // Un filtro por tramo + concat: más predecible que silenceremove, que decide por
+  // energía y no deja saber qué sacó (y sin eso no se puede armar el mapa).
+  const partes = spans
+    .map((s, i) => `[0:a]atrim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`)
+    .join(";");
+  const entradas = spans.map((_, i) => `[a${i}]`).join("");
+  const filtro = `${partes};${entradas}concat=n=${spans.length}:v=0:a=1[out]`;
+
+  try {
+    await run(ffmpegPath(), [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-i", file,
+      "-filter_complex", filtro,
+      "-map", "[out]",
+      "-c:a", "libopus", "-b:a", "24k", "-ac", "1",
+      outPath,
+    ]);
+  } catch {
+    return null; // si el recorte falla seguimos con el audio completo
+  }
+
+  const mapping = [];
+  let at = 0;
+  for (const s of spans) {
+    const len = s.end - s.start;
+    mapping.push({ at, real: s.start, len });
+    at += len;
+  }
+  return { file: outPath, mapping, saved: duration - conVoz, kept: conVoz };
+}
+
 // Decide los puntos de corte respetando los silencios y el máximo configurado.
 //
 // La idea NO es llenar cada trozo hasta el tope y dejar el resto como cola: eso
@@ -348,8 +449,26 @@ async function prepare(file, onStage, chunkMinutes) {
     const finalDuration = (await probeDuration(compressed)) ?? duration ?? 0;
 
     if (!finalDuration || finalDuration <= splitThresholdFor(chunkSeconds)) {
-      const bytes = new Uint8Array(fs.readFileSync(compressed));
-      return { ok: true, tmpDir, duration: finalDuration, parts: [{ bytes, ext: "ogg", start: 0, end: finalDuration }] };
+      // Aunque no haya que cortar, los silencios se detectan igual: sirven para
+      // recortar antes de subir y para que el formateador separe párrafos.
+      let silences = [];
+      try { silences = await detectSilences(compressed); } catch { /* seguimos sin pausas */ }
+
+      // Recorte de silencios: evita que Whisper alucine y gasta menos cuota.
+      let subir = compressed, mapping = null;
+      if (silences.length) {
+        onStage?.({ stage: "trim" });
+        const t = await trimSilence(
+          compressed, finalDuration, silences, path.join(tmpDir, "trim.ogg")
+        );
+        if (t) { subir = t.file; mapping = t.mapping; }
+      }
+
+      const bytes = new Uint8Array(fs.readFileSync(subir));
+      return {
+        ok: true, tmpDir, duration: finalDuration, silences,
+        parts: [{ bytes, ext: "ogg", start: 0, end: finalDuration, mapping }],
+      };
     }
 
     onStage?.({ stage: "silence" });
@@ -359,13 +478,41 @@ async function prepare(file, onStage, chunkMinutes) {
     onStage?.({ stage: "split", total: cuts.length + 1 });
     const files = await splitByCuts(compressed, cuts, finalDuration, tmpDir);
 
-    const parts = files.map((p) => ({
-      bytes: new Uint8Array(fs.readFileSync(p.file)),
-      ext: "ogg",
-      start: p.start,
-      end: p.end,
-    }));
-    return { ok: true, tmpDir, duration: finalDuration, parts };
+    // Recorte de silencios por parte. Cada trozo se recorta contra los silencios
+    // que caen dentro de él, y guarda su propio mapa para devolver los tiempos a
+    // la línea real del audio.
+    onStage?.({ stage: "trim" });
+    const parts = [];
+    for (let i = 0; i < files.length; i++) {
+      const p = files[i];
+      const dur = p.end - p.start;
+      // Silencios de esta parte, con los tiempos relativos al inicio del trozo.
+      const propios = silences
+        .filter((s) => s.end > p.start && s.start < p.end)
+        .map((s) => ({
+          start: Math.max(0, s.start - p.start),
+          end: Math.min(dur, s.end - p.start),
+        }));
+
+      let subir = p.file, mapping = null;
+      if (propios.length) {
+        const t = await trimSilence(
+          p.file, dur, propios, path.join(tmpDir, `trim-${String(i + 1).padStart(2, "0")}.ogg`)
+        );
+        if (t) { subir = t.file; mapping = t.mapping; }
+      }
+      parts.push({
+        bytes: new Uint8Array(fs.readFileSync(subir)),
+        ext: "ogg",
+        start: p.start,
+        end: p.end,
+        mapping,
+      });
+    }
+
+    // Los silencios viajan al renderer: el formateador los usa para cortar párrafos
+    // donde hubo una pausa REAL en el audio, en vez de que el modelo lo adivine.
+    return { ok: true, tmpDir, duration: finalDuration, parts, silences };
   } catch (e) {
     cleanup(tmpDir);
     return { ok: false, error: "No se pudo preparar el audio: " + e.message };
@@ -384,5 +531,7 @@ module.exports = {
   MIN_CHUNK_MINUTES, MAX_CHUNK_MINUTES, chunkSecondsFrom, splitThresholdFor,
   // expuestos para tests
   _planCutPoints: planCutPoints,
+  _voicedSpans: voicedSpans,
+  _trimSilence: trimSilence,
   _probeHasVideo: probeHasVideo,
 };

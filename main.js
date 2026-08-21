@@ -16,6 +16,7 @@ const windowMod = require("./src/main/window");
 const tray = require("./src/main/tray");
 const hotkeys = require("./src/main/hotkeys");
 const settings = require("./src/main/settings");
+const format = require("./src/main/format");
 const { registerIpc } = require("./src/main/ipc");
 
 // Una sola instancia (evita dos píldoras flotando a la vez).
@@ -26,6 +27,10 @@ if (!app.requestSingleInstanceLock()) {
 app.on("second-instance", () => windowMod.reveal());
 
 app.whenReady().then(() => {
+  // Primera vez: el formateo a Markdown queda PRENDIDO si Claude Code está
+  // instalado, apagado si no. Después manda lo que el usuario haya elegido.
+  settings.resolveFormatDefault(format.isAvailable());
+
   registerIpc();
   windowMod.create();
   // Icono de bandeja: la ✕ oculta la píldora acá; "Salir" cierra de verdad.

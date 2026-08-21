@@ -59,6 +59,24 @@ contextBridge.exposeInMainWorld("pill", {
   // Avance de la conversión (ffmpeg tarda con archivos largos).
   onAudioProgress: (cb) => ipcRenderer.on("audio:progress", (_e, p) => cb(p)),
 
+  // Formateo a Markdown (Claude CLI, en el main: el renderer no puede spawnear).
+  formatStatus: () => ipcRenderer.invoke("format:status"),
+  formatRecheck: () => ipcRenderer.invoke("format:recheck"),
+  formatTranscript: (payload) => ipcRenderer.invoke("format:transcript", payload),
+  onFormatProgress: (cb) => ipcRenderer.on("format:progress", (_e, p) => cb(p)),
+
+  // Historial de transcripciones de archivo (.md en la carpeta elegida + índice).
+  historySave: (payload) => ipcRenderer.invoke("history:save", payload),
+  historyList: () => ipcRenderer.invoke("history:list"),
+  historyRead: (id) => ipcRenderer.invoke("history:read", id),
+  historyRemove: (id, alsoFile) => ipcRenderer.invoke("history:remove", id, alsoFile),
+  historyClear: () => ipcRenderer.invoke("history:clear"),
+  historyOpen: (id) => ipcRenderer.invoke("history:open", id),
+  historyReveal: (id) => ipcRenderer.invoke("history:reveal", id),
+  historyFolder: () => ipcRenderer.invoke("history:folder"),
+  historyPickFolder: () => ipcRenderer.invoke("history:pick-folder"),
+  historyOpenFolder: () => ipcRenderer.invoke("history:open-folder"),
+
   // Atajo global
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),
   // Captura nativa del atajo (uiohook): resuelve con {ok, bind:{keycode,ctrl,...}}.

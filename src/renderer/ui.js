@@ -10,7 +10,14 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     pill: $("pill"), recBtn: $("recBtn"), configBtn: $("configBtn"), closeBtn: $("closeBtn"),
-    fileBtn: $("fileBtn"),
+    fileBtn: $("fileBtn"), historyBtn: $("historyBtn"), meetBtn: $("meetBtn"),
+    // Reunión en curso
+    meetPanel: $("meetPanel"), meetDot: $("meetDot"), meetState: $("meetState"),
+    meetTimer: $("meetTimer"), meetLvlSys: $("meetLvlSys"), meetLvlMic: $("meetLvlMic"),
+    meetNote: $("meetNote"), meetStop: $("meetStop"),
+    // Historial
+    historyPanel: $("historyPanel"), histList: $("histList"), histClose: $("histClose"),
+    histClear: $("histClear"), histFolderBtn: $("histFolderBtn"), savedPath: $("savedPath"),
     // Confirmacion de archivo largo + progreso de conversion
     fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
     fcCancel: $("fcCancel"), fcOk: $("fcOk"),
@@ -20,6 +27,8 @@
     // Config
     cfgApiKey: $("cfgApiKey"), cfgMic: $("cfgMic"), cfgLang: $("cfgLang"), cfgAction: $("cfgAction"),
     cfgChunk: $("cfgChunk"),
+    cfgFormat: $("cfgFormat"), cfgFormatHint: $("cfgFormatHint"), cfgTimestamps: $("cfgTimestamps"),
+    cfgSaveHistory: $("cfgSaveHistory"), cfgFolder: $("cfgFolder"), cfgFolderBtn: $("cfgFolderBtn"),
     cfgShortcut: $("cfgShortcut"), cfgShortcutTranslate: $("cfgShortcutTranslate"),
     cfgSave: $("cfgSave"), cfgSaved: $("cfgSaved"), cfgTest: $("cfgTest"),
     configPanel: $("configPanel"),
@@ -29,6 +38,9 @@
   };
 
   let configOpen = false;
+  let historyOpen = false;
+  // Carpeta elegida en el formulario de config (vacía = la por defecto).
+  let historyFolder = "";
   // ¿Hay cambios en el formulario de config sin guardar?
   let dirty = false;
   let timerId = null, startTime = 0;
@@ -46,6 +58,22 @@
     onPickFile: () => {},       // clic en 📎 -> abrir diálogo nativo
     onDropFile: () => {},       // (File) archivo soltado sobre la píldora
     isRecording: () => false,
+    // Historial
+    onHistoryList: async () => ({ ok: true, entries: [] }),
+    onHistoryOpenEntry: () => {},   // (id) cargar el texto en el panel de resultado
+    onHistoryOpenFile: () => {},    // (id) abrir el .md con la app del sistema
+    onHistoryReveal: () => {},      // (id) mostrar en el explorador
+    onHistoryRemove: () => {},      // (id) sacar del índice (no borra el .md)
+    onHistoryClear: () => {},
+    // Config: carpeta y estado del CLI
+    onPickHistoryFolder: async () => null,
+    onOpenHistoryFolder: () => {},  // abrir la carpeta en el explorador
+    onGetHistoryFolder: async () => ({ folder: "", isDefault: true }),
+    onGetFormatStatus: async () => ({ available: false, hint: "" }),
+    onRecheckFormat: async () => ({ available: false, hint: "" }),
+    // Reuniones
+    onMeetStart: () => {},
+    onMeetStop: () => {},
   };
   function configure(callbacks) { cb = { ...cb, ...callbacks }; }
 
@@ -96,7 +124,22 @@
       el.result.classList.add("empty");
       el.copyBtn.disabled = true; el.clearBtn.disabled = true;
       el.err.textContent = "";
+      setSavedPath("");
       el.pill.classList.remove("has-result");
+    }
+    refreshLayout();
+  }
+
+  // Ruta donde quedó el .md guardado. Se muestra bajo el resultado para que sepas
+  // dónde buscarlo sin abrir el historial.
+  function setSavedPath(p) {
+    if (!p) {
+      el.savedPath.hidden = true;
+      el.savedPath.textContent = "";
+    } else {
+      el.savedPath.hidden = false;
+      el.savedPath.textContent = "💾 " + p;
+      el.savedPath.title = p;
     }
     refreshLayout();
   }
@@ -174,6 +217,155 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Reunión en curso: indicador, cronómetro y medidores
+  // ---------------------------------------------------------------------------
+  let meetingOn = false;
+
+  function setMeetingUI(on, info = {}) {
+    meetingOn = !!on;
+    el.pill.classList.toggle("meeting-on", meetingOn);
+    el.meetBtn.classList.toggle("recording", meetingOn);
+    el.meetBtn.title = meetingOn ? "Grabando… clic para detener" : "Grabar una reunión (Teams, Zoom, Meet…)";
+    if (meetingOn) {
+      el.meetTimer.textContent = "00:00";
+      setMeetingLevels(0, 0);
+      // Sin micrófono se graba igual, pero conviene decirlo: si no, el usuario cree
+      // que se está grabando su voz y descubre que no al leer el transcript.
+      el.meetNote.textContent = info.hasMic === false
+        ? "⚠️ Sin micrófono: se graba solo el audio de la reunión, no tu voz."
+        : "Se transcribe por partes mientras grabás.";
+      el.meetState.textContent = "Grabando reunión";
+    }
+    refreshLayout();
+  }
+
+  function setMeetingTime(seconds) {
+    const t = Math.floor(seconds || 0);
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    el.meetTimer.textContent = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+
+  // Se llama varias veces por segundo: solo tocamos el ancho (barato).
+  function setMeetingLevels(mic, sistema) {
+    el.meetLvlMic.style.width = Math.round(Math.max(0, Math.min(1, mic)) * 100) + "%";
+    el.meetLvlSys.style.width = Math.round(Math.max(0, Math.min(1, sistema)) * 100) + "%";
+  }
+
+  // Mientras se transcribe al final, el panel sigue visible pero ya no "grabando".
+  function setMeetingState(msg) {
+    el.meetState.textContent = msg;
+    el.meetDot.style.animation = "none";
+    refreshLayout();
+  }
+
+  function isMeetingOn() { return meetingOn; }
+
+  // ---------------------------------------------------------------------------
+  // Historial de transcripciones
+  // ---------------------------------------------------------------------------
+  function fmtDate(iso) {
+    try {
+      const d = new Date(iso);
+      const hoy = new Date();
+      const mismaFecha = d.toDateString() === hoy.toDateString();
+      const hora = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      if (mismaFecha) return `hoy ${hora}`;
+      return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${hora}`;
+    } catch { return ""; }
+  }
+
+  // Construye la lista con DOM (no innerHTML): los títulos salen del nombre de
+  // archivo del usuario y concatenarlos como HTML sería una inyección.
+  function renderHistory(entries) {
+    el.histList.textContent = "";
+    if (!entries.length) {
+      const empty = document.createElement("p");
+      empty.className = "hist-empty";
+      empty.textContent = "Todavía no transcribiste ningún archivo.";
+      el.histList.appendChild(empty);
+      return;
+    }
+
+    for (const e of entries) {
+      const row = document.createElement("div");
+      row.className = "hist-item" + (e.missing ? " missing" : "");
+
+      const main = document.createElement("button");
+      main.className = "hist-main";
+      main.title = e.missing ? `Falta el archivo: ${e.path}` : "Ver el texto acá";
+      main.disabled = !!e.missing;
+
+      const title = document.createElement("span");
+      title.className = "hist-name";
+      title.textContent = (e.missing ? "⚠️ " : "") + (e.title || "(sin título)");
+
+      const meta = document.createElement("span");
+      meta.className = "hist-meta";
+      const bits = [fmtDate(e.savedAt)];
+      if (e.duration) bits.push(fmtDuration(e.duration));
+      if (e.language) bits.push(e.language.toUpperCase());
+      if (!e.formatted) bits.push("sin formato");
+      meta.textContent = bits.filter(Boolean).join(" · ");
+
+      main.append(title, meta);
+      main.addEventListener("click", () => cb.onHistoryOpenEntry(e.id));
+
+      const openBtn = document.createElement("button");
+      openBtn.className = "hist-act";
+      openBtn.textContent = "📄";
+      openBtn.title = "Abrir el .md";
+      openBtn.disabled = !!e.missing;
+      openBtn.addEventListener("click", () => cb.onHistoryOpenFile(e.id));
+
+      const revealBtn = document.createElement("button");
+      revealBtn.className = "hist-act";
+      revealBtn.textContent = "📂";
+      revealBtn.title = "Mostrar en la carpeta";
+      revealBtn.disabled = !!e.missing;
+      revealBtn.addEventListener("click", () => cb.onHistoryReveal(e.id));
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "hist-act";
+      delBtn.textContent = "✕";
+      delBtn.title = "Sacar de la lista (no borra el archivo)";
+      delBtn.addEventListener("click", async () => {
+        await cb.onHistoryRemove(e.id);
+        await openHistory(true); // refrescar
+      });
+
+      row.append(main, openBtn, revealBtn, delBtn);
+      el.histList.appendChild(row);
+    }
+  }
+
+  // refreshOnly: recargar la lista sin togglear el panel (tras borrar una entrada).
+  async function openHistory(refreshOnly = false) {
+    if (!refreshOnly) {
+      if (configOpen && !requestCloseConfig()) return; // config sucia: primero decidir
+      historyOpen = true;
+      el.pill.classList.add("history-open");
+      el.historyBtn.classList.add("active");
+    }
+    const r = await cb.onHistoryList();
+    renderHistory(r?.entries || []);
+    refreshLayout();
+  }
+
+  function closeHistory() {
+    historyOpen = false;
+    el.pill.classList.remove("history-open");
+    el.historyBtn.classList.remove("active");
+    refreshLayout();
+  }
+
+  function toggleHistory() {
+    if (historyOpen) closeHistory();
+    else openHistory();
+  }
+  function isHistoryOpen() { return historyOpen; }
+
+  // ---------------------------------------------------------------------------
   // Config: cargar/guardar, micrófonos, atajos
   // ---------------------------------------------------------------------------
   // Nombres legibles de keycodes uiohook comunes (para el input). Los que no estén
@@ -204,8 +396,62 @@
     bindTranslate = (settings.shortcutTranslate && typeof settings.shortcutTranslate === "object") ? settings.shortcutTranslate : null;
     el.cfgShortcut.value = bindLabel(bindTranscribe) || "(sin asignar — hacé clic)";
     el.cfgShortcutTranslate.value = bindLabel(bindTranslate) || "(sin asignar — hacé clic)";
+
+    // Formateo: el check se deshabilita si no hay CLI, y el hint explica por qué
+    // (si no, queda un check muerto sin explicación).
+    //
+    // null = el main todavía no resolvió el default (settings.json viejo, o la
+    // config se abrió antes de que corriera resolveFormatDefault). Se cae al mismo
+    // criterio: prendido si el CLI está. Sin esto el check se vería apagado y al
+    // guardar quedaría apagado de verdad, sin que el usuario lo haya elegido.
+    const st = await cb.onGetFormatStatus();
+    el.cfgFormat.checked = settings.formatMarkdown === null || settings.formatMarkdown === undefined
+      ? !!st?.available
+      : !!settings.formatMarkdown;
+    el.cfgTimestamps.checked = settings.formatTimestamps !== false;
+    applyFormatAvailability(st);
+
+    // Historial
+    el.cfgSaveHistory.checked = settings.saveHistory !== false;
+    historyFolder = settings.historyFolder || "";
+    const f = await cb.onGetHistoryFolder();
+    el.cfgFolder.value = historyFolder || f?.folder || "";
+    el.cfgFolder.placeholder = f?.folder || "Documentos\\VozLibre";
+    syncHistoryEnabled();
+
     await populateMics();
     el.cfgMic.value = settings.deviceId || "";
+  }
+
+  // Consulta el estado del CLI y ajusta el check (para el botón de re-chequear).
+  async function refreshFormatAvailability() {
+    applyFormatAvailability(await cb.onGetFormatStatus());
+  }
+
+  // Ajusta el check de formateo según haya CLI o no. Recibe el estado ya
+  // consultado para no pedirlo dos veces al abrir la config.
+  function applyFormatAvailability(st) {
+    const ok = !!st?.available;
+    el.cfgFormat.disabled = !ok;
+    el.cfgTimestamps.disabled = !ok || !el.cfgFormat.checked;
+    if (!ok) {
+      el.cfgFormat.checked = false;
+      el.cfgFormatHint.textContent =
+        (st?.hint || "Claude Code no está instalado.") +
+        " Sin esto la transcripción se guarda sin formato.";
+      el.cfgFormatHint.classList.add("warn");
+    } else {
+      el.cfgFormatHint.textContent =
+        "Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.";
+      el.cfgFormatHint.classList.remove("warn");
+    }
+  }
+
+  // Los sub-controles del historial no tienen sentido con el guardado apagado.
+  function syncHistoryEnabled() {
+    const on = el.cfgSaveHistory.checked;
+    el.cfgFolder.disabled = !on;
+    el.cfgFolderBtn.disabled = !on;
   }
 
   async function populateMics() {
@@ -233,6 +479,10 @@
       chunkMinutes: Number(el.cfgChunk.value) || 10,
       shortcut: bindTranscribe,
       shortcutTranslate: bindTranslate,
+      formatMarkdown: el.cfgFormat.checked,
+      formatTimestamps: el.cfgTimestamps.checked,
+      saveHistory: el.cfgSaveHistory.checked,
+      historyFolder,
     };
   }
   function flashSaved() {
@@ -279,6 +529,7 @@
   function openConfig() {
     configOpen = true;
     dirty = false;
+    if (historyOpen) closeHistory(); // los dos paneles no conviven
     showConfirm(false);
     el.pill.classList.add("config-open");
     el.configBtn.classList.add("active");
@@ -328,9 +579,41 @@
     el.cfgConfirmDiscard.addEventListener("click", () => closeConfig());     // descartar y cerrar
 
     // Cualquier edición de un campo marca cambios sin guardar.
-    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgChunk].forEach((node) => {
+    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgChunk,
+     el.cfgFormat, el.cfgTimestamps, el.cfgSaveHistory].forEach((node) => {
       node.addEventListener("input", markDirty);
       node.addEventListener("change", markDirty);
+    });
+
+    // Los timestamps dependen del formateo: sin formateo no hay dónde ponerlos.
+    el.cfgFormat.addEventListener("change", () => {
+      el.cfgTimestamps.disabled = !el.cfgFormat.checked;
+    });
+    el.cfgSaveHistory.addEventListener("change", syncHistoryEnabled);
+
+    // Elegir carpeta de guardado (diálogo nativo en el main).
+    el.cfgFolderBtn.addEventListener("click", async () => {
+      const folder = await cb.onPickHistoryFolder();
+      if (!folder) return;
+      historyFolder = folder;
+      el.cfgFolder.value = folder;
+      markDirty();
+    });
+
+    // Reunión: el mismo botón arranca y detiene.
+    el.meetBtn.addEventListener("click", () => {
+      if (meetingOn) cb.onMeetStop();
+      else cb.onMeetStart();
+    });
+    el.meetStop.addEventListener("click", () => cb.onMeetStop());
+
+    // Historial
+    el.historyBtn.addEventListener("click", toggleHistory);
+    el.histClose.addEventListener("click", closeHistory);
+    el.histFolderBtn.addEventListener("click", () => cb.onOpenHistoryFolder());
+    el.histClear.addEventListener("click", async () => {
+      await cb.onHistoryClear();
+      await openHistory(true);
     });
 
     el.copyBtn.addEventListener("click", () => {
@@ -394,8 +677,12 @@
 
   window.VLUI = {
     configure, bindEvents, refreshLayout,
-    setStatus, setError, setResult, setRecordingUI, setAudioLevel,
+    setStatus, setError, setResult, setRecordingUI, setAudioLevel, setSavedPath,
     getResultText, isConfigOpen, toggleConfig,
+    // Historial
+    toggleHistory, openHistory, closeHistory, isHistoryOpen,
+    // Reunión
+    setMeetingUI, setMeetingTime, setMeetingLevels, setMeetingState, isMeetingOn,
     closeConfig, requestCloseConfig, isDirty, clearDirty,
     loadConfigIntoUI, readConfigForm, flashSaved,
     // helper para el test "solo mostrar"

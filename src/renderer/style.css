@@ -440,3 +440,206 @@ html, body {
   background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
   transition: width .2s ease;
 }
+
+/* ---------------------------------------------------------------------------
+   Historial de transcripciones (panel 🕘) + ruta de guardado
+   --------------------------------------------------------------------------- */
+.pill.history-open #historyPanel { display: block; }
+/* Un panel por vez: config y confirmaciones tienen prioridad sobre el historial. */
+.pill.history-open #resultPanel { display: none; }
+.pill.config-open #historyPanel,
+.pill.file-confirming #historyPanel { display: none; }
+
+.hist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 8px;
+}
+.hist-title { font-size: 12px; font-weight: 600; color: var(--text); }
+
+.sec.tiny { padding: 4px 8px; font-size: 11px; }
+
+.hist-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hist-list::-webkit-scrollbar { width: 8px; }
+.hist-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+.hist-empty {
+  margin: 12px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hist-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--field-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.hist-item:hover { border-color: rgba(129, 102, 241, 0.45); }
+/* El .md ya no está donde lo dejamos: la fila queda visible pero apagada. */
+.hist-item.missing { opacity: 0.55; }
+
+.hist-main {
+  flex: 1;
+  min-width: 0;                 /* sin esto el texto largo estira la píldora */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.hist-main:disabled { cursor: default; }
+.hist-name {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-meta { font-size: 10.5px; color: var(--muted); }
+
+.hist-act {
+  width: 30px;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--glass-line);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.hist-act:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.hist-act:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Ruta del .md recién guardado, bajo el resultado. */
+.saved-path {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;               /* recorta por la IZQUIERDA: el nombre importa más */
+  text-align: left;
+}
+.saved-path[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Campos de config nuevos: checkboxes y fila carpeta+botón
+   --------------------------------------------------------------------------- */
+.cfg-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  text-transform: none;         /* los labels normales van en mayúsculas; acá no */
+  letter-spacing: normal;
+}
+.cfg-check.sub { margin-top: 8px; margin-left: 14px; }
+.cfg-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: var(--accent-1);
+  cursor: pointer;
+}
+.cfg-check input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.5; }
+.cfg-check:has(input:disabled) { opacity: 0.6; cursor: not-allowed; }
+
+/* Aviso cuando falta el CLI de Claude. */
+.cfg-hint.warn { color: #fbbf24; }
+
+.cfg-row { display: flex; gap: 6px; align-items: center; }
+.cfg-row input {
+  flex: 1;
+  min-width: 0;
+  direction: rtl;               /* ver el final de la ruta, que es lo que distingue */
+  text-align: left;
+}
+.cfg-row .sec { flex: none; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------
+   Grabación de reunión: indicador, cronómetro y medidores por pista
+   --------------------------------------------------------------------------- */
+.pill.meeting-on #meetPanel { display: block; }
+/* Grabando manda: nada tapa el indicador de que se está grabando. */
+.pill.meeting-on #resultPanel,
+.pill.meeting-on #historyPanel { display: none; }
+
+/* El botón 🎙️ late en rojo mientras graba, para verlo aunque el panel esté cerrado. */
+#meetBtn.recording {
+  color: var(--rec-2);
+  animation: meet-pulse 1.6s ease-in-out infinite;
+}
+@keyframes meet-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.meet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 10px;
+}
+.meet-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--rec-2);
+  box-shadow: 0 0 0 0 var(--rec-glow);
+  animation: meet-dot 1.4s ease-out infinite;
+}
+@keyframes meet-dot {
+  0%   { box-shadow: 0 0 0 0 var(--rec-glow); }
+  70%  { box-shadow: 0 0 0 7px rgba(244, 63, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+}
+.meet-state { font-size: 12px; font-weight: 600; flex: 1; }
+.meet-timer {
+  font-variant-numeric: tabular-nums;   /* que no “baile” al cambiar los dígitos */
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--rec-1);
+}
+
+.meet-tracks { display: flex; flex-direction: column; gap: 6px; }
+.meet-track { display: flex; align-items: center; gap: 8px; }
+.meet-label { font-size: 11px; color: var(--muted); width: 76px; flex: none; }
+.meet-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--field-bg);
+  overflow: hidden;
+}
+.meet-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+  transition: width 90ms linear;
+}
+
+.meet-note { margin: 10px 0 0; font-size: 10.5px; color: var(--muted); }
+#meetPanel .panel-foot { justify-content: flex-end; }
