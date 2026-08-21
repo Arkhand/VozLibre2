@@ -93,6 +93,21 @@
       </div>
     </div>
 
+    <!-- Confirmación para CORTAR una reunión en curso: si tocás ⚙ / 🕘 / 📎 con la
+         grabación andando, se avisa antes, porque abrir esos paneles la detiene y
+         perder una reunión a medias no se puede deshacer. -->
+    <div class="panel meet-cut" id="meetCut" hidden>
+      <p class="fc-title">⏹ ¿Cortar la grabación?</p>
+      <p class="fc-detail" id="meetCutMsg">
+        La reunión se está grabando. Si seguís, se detiene y se transcribe lo grabado
+        hasta ahora.
+      </p>
+      <div class="panel-foot">
+        <button class="sec" id="meetCutCancel">Seguir grabando</button>
+        <button class="sec danger" id="meetCutOk">Detener y seguir</button>
+      </div>
+    </div>
+
     <!-- Panel de HISTORIAL (se abre con 🕘). Lista los .md ya transcriptos. -->
     <div class="panel history" id="historyPanel">
       <div class="hist-head">

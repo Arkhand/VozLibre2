@@ -38,6 +38,11 @@ html, body {
 .pill {
   position: relative;
   display: inline-block;        /* en reposo se encoge al contenido (compacta) */
+  /* ANCHO FIJO: la ventana de Electron mide PILL_W (380px) y NO se redimensiona a
+     lo ancho. Sin este tope, el inline-block se estira al contenido y todo lo que
+     pase de 380px queda FUERA del area visible (opciones cortadas). El max-width
+     hace que el contenido se acomode adentro en vez de desbordar. */
+  max-width: calc(100vw - 12px);   /* 12px = margin 6px x 2 */
   margin: 6px;
   border-radius: 32px;
   background: linear-gradient(160deg, var(--glass-2), var(--glass));
@@ -279,10 +284,17 @@ html, body {
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+  /* Si los botones no entran en el ancho fijo, que pasen a la linea de abajo.
+     Sin esto la fila desborda la pildora y el ultimo boton queda cortado. */
+  flex-wrap: wrap;
 }
 
 .sec {
-  flex: 0 0 auto;
+  /* shrink permitido: primero se achica el boton, recien despues parte el texto. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
   padding: 8px 12px;
   border-radius: 12px;
   border: 1px solid var(--glass-line);
@@ -386,6 +398,7 @@ html, body {
 }
 .cfg-confirm-btns {
   display: flex;
+  flex-wrap: wrap;              /* si no entran a lo ancho, bajan de linea */
   gap: 8px;
   justify-content: flex-end;
 }
@@ -457,7 +470,15 @@ html, body {
   gap: 8px;
   padding: 2px 0 8px;
 }
-.hist-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.hist-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .sec.tiny { padding: 4px 8px; font-size: 11px; }
 
@@ -578,7 +599,7 @@ html, body {
   direction: rtl;               /* ver el final de la ruta, que es lo que distingue */
   text-align: left;
 }
-.cfg-row .sec { flex: none; white-space: nowrap; }
+.cfg-row .sec { flex: 0 0 auto; white-space: nowrap; }
 
 /* ---------------------------------------------------------------------------
    Grabación de reunión: indicador, cronómetro y medidores por pista
@@ -672,12 +693,31 @@ html, body {
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text);
+  /* La parte elastica de la fila: el nombre del dispositivo puede ser larguisimo,
+     asi que se achica y termina en "..." en vez de estirar la pildora. */
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .mc-warn { margin: 0 0 8px; font-size: 10.5px; color: #fbbf24; line-height: 1.45; }
+
+/* ---------------------------------------------------------------------------
+   Confirmación para cortar una reunión en curso (⚙ / 🕘 / 📎 mientras graba)
+   --------------------------------------------------------------------------- */
+.meet-cut { display: none; padding-top: 10px; }
+.pill.meet-cutting .meet-cut { display: block; }
+.meet-cut[hidden] { display: none !important; }
+/* Mientras se pregunta, nada más compite por la ventana: solo la pregunta. */
+.pill.meet-cutting #resultPanel,
+.pill.meet-cutting #configPanel,
+.pill.meet-cutting #historyPanel,
+.pill.meet-cutting #meetPanel,
+.pill.meet-cutting #meetConfirm,
+.pill.meet-cutting #fileConfirm { display: none; }
+#meetCut .panel-foot { justify-content: flex-end; }
+#meetCutMsg { margin-bottom: 2px; }
 #meetConfirm .panel-foot { justify-content: flex-end; }
 
 /* Dispositivo de salida en la config: es informativo, no editable. */

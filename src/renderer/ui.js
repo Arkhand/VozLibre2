@@ -23,6 +23,9 @@
     // Confirmación previa a grabar una reunión
     meetConfirm: $("meetConfirm"), mcOut: $("mcOut"), mcMic: $("mcMic"),
     mcWarn: $("mcWarn"), mcCancel: $("mcCancel"), mcOk: $("mcOk"),
+    // Confirmación para cortar una reunión en curso
+    meetCut: $("meetCut"), meetCutMsg: $("meetCutMsg"),
+    meetCutCancel: $("meetCutCancel"), meetCutOk: $("meetCutOk"),
     // Confirmacion de archivo largo + progreso de conversion
     fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
     fcCancel: $("fcCancel"), fcOk: $("fcOk"),
@@ -249,6 +252,54 @@
     if (r) r(answer);
   }
 
+  // ¿Está la pregunta "¿empezar a grabar?" en pantalla, todavía sin responder?
+  function isMeetConfirming() { return meetConfirmResolve !== null; }
+
+  // ---------------------------------------------------------------------------
+  // Tocar ⚙ / 🕘 / 📎 con una reunión de por medio
+  // ---------------------------------------------------------------------------
+  // Esos paneles no conviven con la reunión, así que abrirlos la interrumpe. Según
+  // en qué punto estemos, la interrupción cuesta muy distinto:
+  //   - Todavía preguntando "¿empezar?" → no se grabó nada: se cancela y listo.
+  //   - Grabando de verdad → hay minutos de reunión en juego: se avisa ANTES.
+  // Devuelve true si se puede seguir, false si quedó esperando la confirmación.
+  let meetCutResume = null;   // qué hacer si el usuario acepta cortar
+
+  function guardMeetingBusy(resume) {
+    // Caso 1: la confirmación previa sigue abierta y nunca se empezó a grabar.
+    // No hay nada que perder, así que se cancela sola y no molesta con preguntas.
+    if (isMeetConfirming()) {
+      closeMeetConfirm(false);
+      return true;
+    }
+    // Caso 2: grabación en curso. Cortar es irreversible: preguntar primero.
+    if (meetingOn) {
+      askMeetCut(resume);
+      return false;
+    }
+    return true;
+  }
+
+  function askMeetCut(resume) {
+    meetCutResume = typeof resume === "function" ? resume : null;
+    el.meetCut.hidden = false;
+    el.pill.classList.add("meet-cutting");
+    refreshLayout();
+  }
+
+  function closeMeetCut(accept) {
+    el.meetCut.hidden = true;
+    el.pill.classList.remove("meet-cutting");
+    const resume = meetCutResume;
+    meetCutResume = null;
+    refreshLayout();
+    if (!accept) return;
+    // Detener la reunión (transcribe lo grabado) y recién después abrir el panel
+    // que el usuario había pedido.
+    cb.onMeetStop();
+    if (resume) resume();
+  }
+
   // ---------------------------------------------------------------------------
   // Reunión en curso: indicador, cronómetro y medidores
   // ---------------------------------------------------------------------------
@@ -432,8 +483,9 @@
   }
 
   function toggleHistory() {
-    if (historyOpen) closeHistory();
-    else openHistory();
+    if (historyOpen) { closeHistory(); return; }
+    if (!guardMeetingBusy(() => openHistory())) return;
+    openHistory();
   }
   function isHistoryOpen() { return historyOpen; }
 
@@ -633,8 +685,10 @@
 
   // Clic en ⚙: si está abierta, intentar cerrar (con confirmación si hay cambios).
   function toggleConfig() {
-    if (configOpen) requestCloseConfig();
-    else openConfig();
+    if (configOpen) { requestCloseConfig(); return; }
+    // Abrir la config corta la reunión: avisar (o cancelar la confirmación previa).
+    if (!guardMeetingBusy(openConfig)) return;
+    openConfig();
   }
 
   // Pedir cierre: si hay cambios sin guardar, pregunta; si no, cierra directo.
@@ -660,6 +714,11 @@
     // ✕: si la config está abierta con cambios, primero pregunta (no cierra la app).
     el.closeBtn.addEventListener("click", () => {
       if (configOpen && dirty) { showConfirm(true); return; }
+      // Ocultar con la pregunta "¿empezar a grabar?" abierta dejaría esa promesa
+      // colgada (y el panel reaparecería al volver): se cancela sola.
+      if (isMeetConfirming()) closeMeetConfirm(false);
+      // Ojo: la ✕ solo esconde al tray, NO corta la reunión. Se sigue grabando y
+      // el 🎙️ late en rojo, así que no hace falta preguntar nada acá.
       window.pill?.close();
     });
     el.cfgSave.addEventListener("click", () => cb.onSaveConfig(readConfigForm()));
@@ -710,6 +769,10 @@
     el.mcOk.addEventListener("click", () => closeMeetConfirm(true));
     el.mcCancel.addEventListener("click", () => closeMeetConfirm(false));
 
+    // Confirmación para cortar una reunión en curso.
+    el.meetCutOk.addEventListener("click", () => closeMeetCut(true));
+    el.meetCutCancel.addEventListener("click", () => closeMeetCut(false));
+
     el.copyBtn.addEventListener("click", () => {
       cb.onCopy(el.result.textContent);
       const orig = el.copyBtn.textContent;
@@ -721,7 +784,10 @@
     attachShortcutCapture(el.cfgShortcut, (b) => { bindTranscribe = b; markDirty(); });
     attachShortcutCapture(el.cfgShortcutTranslate, (b) => { bindTranslate = b; markDirty(); });
 
-    el.fileBtn.addEventListener("click", () => cb.onPickFile());
+    el.fileBtn.addEventListener("click", () => {
+      if (!guardMeetingBusy(() => cb.onPickFile())) return;
+      cb.onPickFile();
+    });
     el.fcOk.addEventListener("click", () => closeFileConfirm(true));
     el.fcCancel.addEventListener("click", () => closeFileConfirm(false));
     bindDropZone();
@@ -763,6 +829,8 @@
       if (configOpen) return;
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
+      // Soltar un audio también interrumpe la reunión: mismo aviso que con 📎.
+      if (!guardMeetingBusy(() => cb.onDropFile(file))) return;
       // El preload resuelve la ruta real en disco (el renderer no puede con
       // contextIsolation) y pide al main que lo lea.
       cb.onDropFile(file);
