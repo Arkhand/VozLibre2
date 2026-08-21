@@ -229,6 +229,16 @@
 
   async function meetStart() {
     if (MT.isRecording()) return;
+
+    // Confirmar antes de arrancar: se muestra de qué dispositivos se va a grabar,
+    // porque descubrir a los 40 minutos que se capturó la salida equivocada no
+    // tiene arreglo. Se puede apagar desde ⚙.
+    if (settings.meetingConfirm !== false) {
+      const dev = await MT.preview();
+      const ok = await UI.askMeetConfirm(dev);
+      if (!ok) return;
+    }
+
     meetLineas = { sistema: [], mic: [] };
     meetPendientes = [];
     meetIdioma = "";
@@ -239,7 +249,7 @@
     const r = await MT.start();
     if (!r.ok) { UI.setStatus(""); UI.setError(r.error); return; }
 
-    UI.setMeetingUI(true, { hasMic: r.hasMic });
+    UI.setMeetingUI(true, { hasMic: r.hasMic, salida: r.salida });
     UI.setStatus("");
   }
 
@@ -371,8 +381,9 @@
       if (!r?.ok) UI.setError(r?.error || "No se pudo abrir el archivo.");
     },
     onHistoryReveal: (id) => window.pill.historyReveal(id),
-    onHistoryRemove: (id) => window.pill.historyRemove(id, false),
-    onHistoryClear: () => window.pill.historyClear(),
+    // La ✕ del historial borra de verdad: la UI ya pidió confirmación.
+    onHistoryRemove: (id, alsoFile) => window.pill.historyRemove(id, !!alsoFile),
+    onGetMeetingOutput: () => MT.preview().then((d) => d.salida),
     // ---- Carpeta de guardado ----
     onPickHistoryFolder: async () => {
       const r = await window.pill.historyPickFolder();

@@ -13,7 +13,7 @@
  * explicación (misma idea de metadata y fuente guardadas por separado).
  */
 
-const { app } = require("electron");
+const { app, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -237,20 +237,26 @@ function read(id) {
   }
 }
 
-/* Saca una entrada del índice. `alsoFile` borra además el .md del disco.
- * Por defecto NO borra el archivo: sacar algo de una lista no debería destruir
- * el documento, y el usuario puede no esperarlo. */
-function remove(id, alsoFile = false) {
+/* Saca una entrada del índice. Con `alsoFile` manda además el .md a la Papelera
+ * de reciclaje (no lo borra del disco): si el usuario se equivocó, lo recupera
+ * desde Windows. La UI pregunta antes de llegar acá.
+ *
+ * Si el archivo no se puede mandar a la Papelera, la entrada NO se saca del
+ * índice: dejar el .md en disco y desaparecerlo de la lista es la peor mezcla. */
+async function remove(id, alsoFile = false) {
   const entries = loadIndex();
   const entry = entries.find((e) => e.id === id);
   if (!entry) return { ok: false, error: "Entrada no encontrada." };
 
-  if (alsoFile) {
-    try { fs.rmSync(entry.path, { force: true }); }
-    catch (e) { return { ok: false, error: `No se pudo borrar el archivo: ${e.message}` }; }
+  if (alsoFile && fs.existsSync(entry.path)) {
+    try {
+      await shell.trashItem(entry.path);
+    } catch (e) {
+      return { ok: false, error: `No se pudo mandar el archivo a la Papelera: ${e.message}` };
+    }
   }
   saveIndex(entries.filter((e) => e.id !== id));
-  return { ok: true };
+  return { ok: true, trashed: !!alsoFile };
 }
 
 function clear() {

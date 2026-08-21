@@ -70,7 +70,6 @@ contextBridge.exposeInMainWorld("pill", {
   historyList: () => ipcRenderer.invoke("history:list"),
   historyRead: (id) => ipcRenderer.invoke("history:read", id),
   historyRemove: (id, alsoFile) => ipcRenderer.invoke("history:remove", id, alsoFile),
-  historyClear: () => ipcRenderer.invoke("history:clear"),
   historyOpen: (id) => ipcRenderer.invoke("history:open", id),
   historyReveal: (id) => ipcRenderer.invoke("history:reveal", id),
   historyFolder: () => ipcRenderer.invoke("history:folder"),

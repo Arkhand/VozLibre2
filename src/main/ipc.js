@@ -295,7 +295,6 @@ function registerIpc() {
   ipcMain.handle("history:list", () => ({ ok: true, entries: history.list() }));
   ipcMain.handle("history:read", (_e, id) => history.read(id));
   ipcMain.handle("history:remove", (_e, id, alsoFile) => history.remove(id, !!alsoFile));
-  ipcMain.handle("history:clear", () => history.clear());
 
   // Abre el .md (o su carpeta) con la app por defecto del sistema.
   ipcMain.handle("history:open", async (_e, id) => {

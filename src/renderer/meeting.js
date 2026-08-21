@@ -68,11 +68,64 @@
     return st;
   }
 
+  /* Micrófono de la pista "Yo".
+   *
+   * Se prefiere meetingMicId (el que elegiste para reuniones) y se cae al del
+   * dictado. Si el elegido ya no está (desconectaste los auriculares), se reintenta
+   * con el del sistema en vez de quedarse sin la pista: grabar la reunión sin tu voz
+   * es peor que grabarla con otro micrófono. */
   async function abrirMic() {
     const s = cb.getSettings();
-    return navigator.mediaDevices.getUserMedia(
-      s.deviceId ? { audio: { deviceId: { exact: s.deviceId } } } : { audio: true }
-    );
+    const preferido = s.meetingMicId || s.deviceId || "";
+    if (preferido) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: preferido } },
+        });
+      } catch { /* ese micrófono ya no está: probamos con el del sistema */ }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+
+  /* Nombre del dispositivo de SALIDA que se va a capturar.
+   *
+   * getDisplayMedia captura siempre la salida por defecto de Windows y NO acepta
+   * elegir otra (rechaza las constraints exactas). Así que no se puede seleccionar:
+   * lo único honesto es decir cuál se está grabando, para que el usuario la cambie
+   * en Windows si no es la que corresponde. */
+  async function salidaActual() {
+    try {
+      const ds = await navigator.mediaDevices.enumerateDevices();
+      const def = ds.find((d) => d.kind === "audiooutput" && d.deviceId === "default");
+      // La etiqueta viene como "Default - Altavoces (X)": nos quedamos con el nombre.
+      if (def?.label) return def.label.replace(/^Default\s*-\s*/i, "");
+      const primero = ds.find((d) => d.kind === "audiooutput");
+      return primero?.label || "";
+    } catch {
+      return "";
+    }
+  }
+
+  /* Nombre del micrófono que se usaría, para mostrarlo en la confirmación. */
+  async function micActual() {
+    const s = cb.getSettings();
+    const id = s.meetingMicId || s.deviceId || "";
+    try {
+      const ds = await navigator.mediaDevices.enumerateDevices();
+      const ins = ds.filter((d) => d.kind === "audioinput");
+      const elegido = id ? ins.find((d) => d.deviceId === id) : null;
+      if (elegido) return elegido.label;
+      const def = ins.find((d) => d.deviceId === "default");
+      return (def?.label || ins[0]?.label || "").replace(/^Default\s*-\s*/i, "");
+    } catch {
+      return "";
+    }
+  }
+
+  /* Qué se va a grabar, para el popup de confirmación. */
+  async function preview() {
+    const [salida, mic] = await Promise.all([salidaActual(), micActual()]);
+    return { salida, mic };
   }
 
   // Medidor de nivel por pista, para que la UI muestre que algo está entrando.
@@ -161,7 +214,16 @@
     pistas.forEach((p) => p.recorder.start());
     arrancarTimers();
 
-    return { ok: true, tracks: pistas.map((p) => LABELS[p.nombre]), hasMic: !!mic };
+    // El label real de la pista de mic: si el elegido no estaba, acá se ve cuál
+    // quedó de verdad (no el que se pidió).
+    const micLabel = mic ? (mic.getAudioTracks()[0]?.label || "") : "";
+    return {
+      ok: true,
+      tracks: pistas.map((p) => LABELS[p.nombre]),
+      hasMic: !!mic,
+      micLabel,
+      salida: await salidaActual(),
+    };
   }
 
   // webm/opus es lo que Chromium graba nativo y Groq acepta. Si el navegador no lo
@@ -307,7 +369,7 @@
   }
 
   window.VLMeeting = {
-    configure, start, stop, isRecording, elapsed, merge, render,
+    configure, start, stop, isRecording, elapsed, merge, render, preview,
     LABELS, CHUNK_MS,
     // expuestos para tests
     _merge: merge,

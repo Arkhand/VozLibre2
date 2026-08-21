@@ -43,6 +43,14 @@ const DEFAULTS = {
   // archivos partidos en varias partes: en un audio corto no hay tramos que marcar.
   formatTimestamps: true,
 
+  // ---- Reuniones ----
+  // Micrófono para la pista "Yo". "" = el mismo que usa el dictado (deviceId).
+  // Se separa a propósito: en una reunión solés usar auriculares con micrófono, y
+  // no tiene por qué ser el mismo con el que dictás.
+  meetingMicId: "",
+  // Confirmar antes de empezar a grabar (evita arrancar sin querer).
+  meetingConfirm: true,
+
   // ---- Historial de archivos ----
   // Guardar un .md por cada archivo transcripto. No aplica al push-to-talk.
   saveHistory: true,

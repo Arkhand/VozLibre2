@@ -17,7 +17,12 @@
     meetNote: $("meetNote"), meetStop: $("meetStop"),
     // Historial
     historyPanel: $("historyPanel"), histList: $("histList"), histClose: $("histClose"),
-    histClear: $("histClear"), histFolderBtn: $("histFolderBtn"), savedPath: $("savedPath"),
+    histFolderBtn: $("histFolderBtn"), savedPath: $("savedPath"), histHint: $("histHint"),
+    histConfirm: $("histConfirm"), histConfirmMsg: $("histConfirmMsg"),
+    histConfirmCancel: $("histConfirmCancel"), histConfirmOk: $("histConfirmOk"),
+    // Confirmación previa a grabar una reunión
+    meetConfirm: $("meetConfirm"), mcOut: $("mcOut"), mcMic: $("mcMic"),
+    mcWarn: $("mcWarn"), mcCancel: $("mcCancel"), mcOk: $("mcOk"),
     // Confirmacion de archivo largo + progreso de conversion
     fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
     fcCancel: $("fcCancel"), fcOk: $("fcOk"),
@@ -29,6 +34,7 @@
     cfgChunk: $("cfgChunk"),
     cfgFormat: $("cfgFormat"), cfgFormatHint: $("cfgFormatHint"), cfgTimestamps: $("cfgTimestamps"),
     cfgSaveHistory: $("cfgSaveHistory"), cfgFolder: $("cfgFolder"), cfgFolderBtn: $("cfgFolderBtn"),
+    cfgMeetMic: $("cfgMeetMic"), cfgMeetOut: $("cfgMeetOut"), cfgMeetConfirm: $("cfgMeetConfirm"),
     cfgShortcut: $("cfgShortcut"), cfgShortcutTranslate: $("cfgShortcutTranslate"),
     cfgSave: $("cfgSave"), cfgSaved: $("cfgSaved"), cfgTest: $("cfgTest"),
     configPanel: $("configPanel"),
@@ -63,8 +69,8 @@
     onHistoryOpenEntry: () => {},   // (id) cargar el texto en el panel de resultado
     onHistoryOpenFile: () => {},    // (id) abrir el .md con la app del sistema
     onHistoryReveal: () => {},      // (id) mostrar en el explorador
-    onHistoryRemove: () => {},      // (id) sacar del índice (no borra el .md)
-    onHistoryClear: () => {},
+    onHistoryRemove: () => {},      // (id, borrarArchivo) sacar del índice; con true manda el .md a la Papelera
+    onGetMeetingOutput: async () => "",  // nombre de la salida por defecto de Windows
     // Config: carpeta y estado del CLI
     onPickHistoryFolder: async () => null,
     onOpenHistoryFolder: () => {},  // abrir la carpeta en el explorador
@@ -217,6 +223,33 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Confirmación previa a grabar una reunión
+  // ---------------------------------------------------------------------------
+  // Se muestran los dispositivos ANTES de empezar: descubrir a los 40 minutos que
+  // se grabó la salida equivocada es la peor forma de enterarse.
+  let meetConfirmResolve = null;
+
+  function askMeetConfirm(dev) {
+    el.mcOut.textContent = dev?.salida || "(no se pudo determinar)";
+    el.mcOut.title = dev?.salida || "";
+    el.mcMic.textContent = dev?.mic || "(sin micrófono)";
+    el.mcMic.title = dev?.mic || "";
+    el.meetConfirm.hidden = false;
+    el.pill.classList.add("meet-confirming");
+    refreshLayout();
+    return new Promise((resolve) => { meetConfirmResolve = resolve; });
+  }
+
+  function closeMeetConfirm(answer) {
+    el.meetConfirm.hidden = true;
+    el.pill.classList.remove("meet-confirming");
+    refreshLayout();
+    const r = meetConfirmResolve;
+    meetConfirmResolve = null;
+    if (r) r(answer);
+  }
+
+  // ---------------------------------------------------------------------------
   // Reunión en curso: indicador, cronómetro y medidores
   // ---------------------------------------------------------------------------
   let meetingOn = false;
@@ -231,9 +264,14 @@
       setMeetingLevels(0, 0);
       // Sin micrófono se graba igual, pero conviene decirlo: si no, el usuario cree
       // que se está grabando su voz y descubre que no al leer el transcript.
+      // Se deja a la vista de qué dispositivo se está grabando: si es el
+      // equivocado, mejor enterarse en el minuto 1 que en el 40.
       el.meetNote.textContent = info.hasMic === false
         ? "⚠️ Sin micrófono: se graba solo el audio de la reunión, no tu voz."
-        : "Se transcribe por partes mientras grabás.";
+        : info.salida
+          ? `🔊 Grabando de: ${info.salida}`
+          : "Se transcribe por partes mientras grabás.";
+      el.meetNote.title = info.salida || "";
       el.meetState.textContent = "Grabando reunión";
     }
     refreshLayout();
@@ -275,9 +313,18 @@
     } catch { return ""; }
   }
 
+  // Cuántas transcripciones se listan. El resto sigue en disco y en el índice: el
+  // panel es para "lo último que hice", no un archivo completo.
+  const HIST_MAX = 10;
+
   // Construye la lista con DOM (no innerHTML): los títulos salen del nombre de
   // archivo del usuario y concatenarlos como HTML sería una inyección.
-  function renderHistory(entries) {
+  function renderHistory(todas) {
+    const entries = (todas || []).slice(0, HIST_MAX);
+    el.histHint.textContent = todas.length > HIST_MAX
+      ? `Se muestran las últimas ${HIST_MAX} de ${todas.length}. Los .md quedan todos en la carpeta.`
+      : "Los .md quedan en la carpeta que elegiste en ⚙.";
+
     el.histList.textContent = "";
     if (!entries.length) {
       const empty = document.createElement("p");
@@ -328,11 +375,8 @@
       const delBtn = document.createElement("button");
       delBtn.className = "hist-act";
       delBtn.textContent = "✕";
-      delBtn.title = "Sacar de la lista (no borra el archivo)";
-      delBtn.addEventListener("click", async () => {
-        await cb.onHistoryRemove(e.id);
-        await openHistory(true); // refrescar
-      });
+      delBtn.title = "Borrar (el .md va a la Papelera)";
+      delBtn.addEventListener("click", () => askDelete(e));
 
       row.append(main, openBtn, revealBtn, delBtn);
       el.histList.appendChild(row);
@@ -356,7 +400,35 @@
     historyOpen = false;
     el.pill.classList.remove("history-open");
     el.historyBtn.classList.remove("active");
+    showHistConfirm(false);
     refreshLayout();
+  }
+
+  // ----- Borrar una transcripción (con confirmación) -----
+  // Se borra el .md además de sacarlo de la lista, así que se pregunta. Va a la
+  // Papelera: si te equivocaste, lo recuperás desde Windows.
+  let borrando = null;
+
+  function showHistConfirm(show) {
+    el.histConfirm.hidden = !show;
+    el.historyPanel.classList.toggle("confirming", show);
+    if (!show) borrando = null;
+    refreshLayout();
+  }
+
+  function askDelete(entry) {
+    borrando = entry;
+    el.histConfirmMsg.textContent = `¿Borrar "${entry.title || "esta transcripción"}"?`;
+    showHistConfirm(true);
+  }
+
+  async function confirmDelete() {
+    const e = borrando;
+    showHistConfirm(false);
+    if (!e) return;
+    const r = await cb.onHistoryRemove(e.id, true /* borrar también el archivo */);
+    if (r && r.ok === false) setError(r.error || "No se pudo borrar el archivo.");
+    await openHistory(true); // refrescar la lista
   }
 
   function toggleHistory() {
@@ -419,8 +491,14 @@
     el.cfgFolder.placeholder = f?.folder || "Documentos\\VozLibre";
     syncHistoryEnabled();
 
+    // Reuniones
+    el.cfgMeetConfirm.checked = settings.meetingConfirm !== false;
+
     await populateMics();
     el.cfgMic.value = settings.deviceId || "";
+    el.cfgMeetMic.value = settings.meetingMicId || "";
+    // La salida es informativa: no se puede elegir desde acá (ver meeting.js).
+    el.cfgMeetOut.textContent = (await cb.onGetMeetingOutput()) || "(no se pudo determinar)";
   }
 
   // Consulta el estado del CLI y ajusta el check (para el botón de re-chequear).
@@ -454,19 +532,30 @@
     el.cfgFolderBtn.disabled = !on;
   }
 
+  // Llena los dos selectores de micrófono: el del dictado y el de reuniones.
   async function populateMics() {
     try {
       try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {} // permiso -> labels
       const devices = await navigator.mediaDevices.enumerateDevices();
       const mics = devices.filter((d) => d.kind === "audioinput");
-      el.cfgMic.innerHTML = '<option value="">Por defecto del sistema</option>';
-      mics.forEach((d, i) => {
-        const opt = document.createElement("option");
-        opt.value = d.deviceId;
-        opt.textContent = d.label || `Micrófono ${i + 1}`;
-        el.cfgMic.appendChild(opt);
-      });
-    } catch { /* si falla, queda solo "por defecto" */ }
+
+      const llenar = (select, textoVacio) => {
+        select.textContent = "";
+        const vacia = document.createElement("option");
+        vacia.value = "";
+        vacia.textContent = textoVacio;
+        select.appendChild(vacia);
+        mics.forEach((d, i) => {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `Micrófono ${i + 1}`;
+          select.appendChild(opt);
+        });
+      };
+
+      llenar(el.cfgMic, "Por defecto del sistema");
+      llenar(el.cfgMeetMic, "El mismo del dictado");
+    } catch { /* si falla, quedan solo las opciones vacías */ }
   }
 
   // Devuelve el objeto de settings que el orquestador debe guardar.
@@ -483,6 +572,8 @@
       formatTimestamps: el.cfgTimestamps.checked,
       saveHistory: el.cfgSaveHistory.checked,
       historyFolder,
+      meetingMicId: el.cfgMeetMic.value,
+      meetingConfirm: el.cfgMeetConfirm.checked,
     };
   }
   function flashSaved() {
@@ -580,7 +671,8 @@
 
     // Cualquier edición de un campo marca cambios sin guardar.
     [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgChunk,
-     el.cfgFormat, el.cfgTimestamps, el.cfgSaveHistory].forEach((node) => {
+     el.cfgFormat, el.cfgTimestamps, el.cfgSaveHistory,
+     el.cfgMeetMic, el.cfgMeetConfirm].forEach((node) => {
       node.addEventListener("input", markDirty);
       node.addEventListener("change", markDirty);
     });
@@ -611,10 +703,12 @@
     el.historyBtn.addEventListener("click", toggleHistory);
     el.histClose.addEventListener("click", closeHistory);
     el.histFolderBtn.addEventListener("click", () => cb.onOpenHistoryFolder());
-    el.histClear.addEventListener("click", async () => {
-      await cb.onHistoryClear();
-      await openHistory(true);
-    });
+    el.histConfirmCancel.addEventListener("click", () => showHistConfirm(false));
+    el.histConfirmOk.addEventListener("click", () => confirmDelete());
+
+    // Confirmación previa a grabar una reunión.
+    el.mcOk.addEventListener("click", () => closeMeetConfirm(true));
+    el.mcCancel.addEventListener("click", () => closeMeetConfirm(false));
 
     el.copyBtn.addEventListener("click", () => {
       cb.onCopy(el.result.textContent);
@@ -683,6 +777,7 @@
     toggleHistory, openHistory, closeHistory, isHistoryOpen,
     // Reunión
     setMeetingUI, setMeetingTime, setMeetingLevels, setMeetingState, isMeetingOn,
+    askMeetConfirm, closeMeetConfirm,
     closeConfig, requestCloseConfig, isDirty, clearDirty,
     loadConfigIntoUI, readConfigForm, flashSaved,
     // helper para el test "solo mostrar"

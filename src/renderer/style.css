@@ -643,3 +643,59 @@ html, body {
 
 .meet-note { margin: 10px 0 0; font-size: 10.5px; color: var(--muted); }
 #meetPanel .panel-foot { justify-content: flex-end; }
+
+/* ---------------------------------------------------------------------------
+   Confirmación antes de grabar una reunión
+   --------------------------------------------------------------------------- */
+.meet-confirm { display: none; padding-top: 10px; }
+.pill.meet-confirming .meet-confirm { display: block; }
+.meet-confirm[hidden] { display: none !important; }
+/* Mientras se confirma, nada más compite por la ventana. */
+.pill.meet-confirming #resultPanel,
+.pill.meet-confirming #configPanel,
+.pill.meet-confirming #historyPanel,
+.pill.meet-confirming #meetPanel { display: none; }
+
+.mc-devs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  background: var(--field-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+}
+.mc-dev { display: flex; align-items: baseline; gap: 8px; }
+.mc-dev-k { font-size: 11px; color: var(--muted); width: 86px; flex: none; }
+.mc-dev-v {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mc-warn { margin: 0 0 8px; font-size: 10.5px; color: #fbbf24; line-height: 1.45; }
+#meetConfirm .panel-foot { justify-content: flex-end; }
+
+/* Dispositivo de salida en la config: es informativo, no editable. */
+.cfg-static {
+  padding: 8px 10px;
+  background: var(--field-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Confirmación de borrado dentro del panel de historial: tapa la lista para que
+   la pregunta entre siempre en la ventana. */
+#historyPanel.confirming .hist-head,
+#historyPanel.confirming .hist-list,
+#historyPanel.confirming .panel-foot,
+#historyPanel.confirming #histHint { display: none; }

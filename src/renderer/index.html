@@ -44,6 +44,31 @@
       <div class="err" id="err"></div>
     </div>
 
+    <!-- Confirmación ANTES de grabar una reunión: dice qué dispositivos se van a
+         usar, para no descubrir a los 40 minutos que se grabó la salida equivocada. -->
+    <div class="panel meet-confirm" id="meetConfirm" hidden>
+      <p class="fc-title">🎙️ Grabar la reunión</p>
+      <div class="mc-devs">
+        <div class="mc-dev">
+          <span class="mc-dev-k">🔊 Se graba de</span>
+          <span class="mc-dev-v" id="mcOut">—</span>
+        </div>
+        <div class="mc-dev">
+          <span class="mc-dev-k">🎤 Tu voz</span>
+          <span class="mc-dev-v" id="mcMic">—</span>
+        </div>
+      </div>
+      <p class="mc-warn" id="mcWarn">
+        Se captura la salida por defecto de Windows. Si la reunión suena por otro
+        dispositivo, cambialo en Windows antes de empezar.
+      </p>
+      <p class="cfg-hint">Windows va a pedirte compartir una pantalla: solo se usa el audio, no se graba la imagen.</p>
+      <div class="panel-foot">
+        <button class="sec" id="mcCancel">Cancelar</button>
+        <button class="sec primary" id="mcOk">Empezar a grabar</button>
+      </div>
+    </div>
+
     <!-- Panel de REUNIÓN EN CURSO: indicador rojo latiendo, cronómetro y medidores
          por pista, para saber de un vistazo que está grabando y que entra audio. -->
     <div class="panel meeting" id="meetPanel">
@@ -77,9 +102,18 @@
       <div class="hist-list" id="histList"></div>
       <div class="panel-foot">
         <button class="sec" id="histClose">Cerrar</button>
-        <button class="sec danger" id="histClear">Vaciar lista</button>
       </div>
-      <small class="cfg-hint">"Vaciar lista" borra el historial de la píldora, no los archivos .md del disco.</small>
+      <small class="cfg-hint" id="histHint">Se muestran las últimas 10. Los .md quedan todos en la carpeta.</small>
+
+      <!-- Confirmación para borrar una transcripción (oculto por defecto). -->
+      <div class="cfg-confirm" id="histConfirm" hidden>
+        <p class="cfg-confirm-msg" id="histConfirmMsg">¿Borrar esta transcripción?</p>
+        <p class="cfg-hint">El archivo .md va a la Papelera de reciclaje.</p>
+        <div class="cfg-confirm-btns">
+          <button class="sec" id="histConfirmCancel">Cancelar</button>
+          <button class="sec danger" id="histConfirmOk">Borrar</button>
+        </div>
+      </div>
     </div>
 
     <!-- Progreso de la conversión con ffmpeg (archivos largos / video). -->
@@ -127,6 +161,19 @@
           <span>Encabezados con marca de tiempo por tramo</span>
         </label>
         <small class="cfg-hint">Solo en audios largos que se cortan en partes.</small>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgMeetMic">Micrófono para reuniones 🎙️</label>
+        <select id="cfgMeetMic"><option value="">El mismo del dictado</option></select>
+        <small class="cfg-hint">Tu voz en las reuniones (pista "Yo"). Suele ser el de los auriculares, distinto del que usás para dictar.</small>
+        <label>Audio de la reunión 🔊</label>
+        <div class="cfg-static" id="cfgMeetOut">—</div>
+        <small class="cfg-hint">A los demás se los graba de la salida <strong>por defecto de Windows</strong>; no se puede elegir otra desde acá. Si la reunión suena por otro dispositivo, cambiá el predeterminado en Windows antes de grabar.</small>
+        <label class="cfg-check">
+          <input type="checkbox" id="cfgMeetConfirm">
+          <span>Confirmar antes de empezar a grabar</span>
+        </label>
       </div>
 
       <div class="cfg-field">
