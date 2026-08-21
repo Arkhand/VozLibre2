@@ -24,6 +24,11 @@ const DEFAULTS = {
   action: "show",        // qué hacer con el texto: "show" | "paste" | "type"
   shortcut: { keycode: 66, ctrl: false, shift: false, alt: false, meta: false },          // F8: dictar
   shortcutTranslate: { keycode: 67, ctrl: false, shift: false, alt: false, meta: false }, // F9: traducir
+  // Duración máxima de cada trozo al partir un audio largo, en minutos.
+  // 10 min es el recomendado: entra cómodo en el límite por pedido de Groq en
+  // todos los tiers y deja los trozos bien por debajo de los 25 MB. Subirlo
+  // manda menos pedidos (más rápido) pero arriesga rechazos de la API.
+  chunkMinutes: 10,
 };
 
 function settingsPath() {

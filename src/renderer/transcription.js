@@ -142,14 +142,12 @@
     await sendToGroq(blob, mode, ext, true /* fromFile */);
   }
 
+  // Llamada cruda a Groq. Devuelve el texto reconocido o lanza.
   // forceExt: extensión real cuando el audio viene de un archivo (el blob grabado
   // no la trae y hay que deducirla del mimeType del MediaRecorder).
-  // fromFile: el audio venía de un archivo, no del micrófono. Viaja hasta onText
-  // para que el orquestador no aplique pegar/teclear sobre la app de atrás.
-  async function sendToGroq(blob, mode, forceExt, fromFile = false) {
+  async function callGroq(blob, mode, forceExt) {
     const s = cb.getSettings();
     const translate = mode === "translate";
-    cb.onStatus(translate ? "Traduciendo a inglés con Groq…" : "Transcribiendo con Groq…");
     const ext = forceExt || (blob.type.includes("ogg") ? "ogg" : "webm");
     const form = new FormData();
     form.append("file", blob, "audio." + ext);
@@ -159,23 +157,50 @@
     if (!translate && s.lang) form.append("language", s.lang);
 
     const endpoint = translate ? "/audio/translations" : "/audio/transcriptions";
+    const res = await fetch(GROQ_BASE_URL + endpoint, {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + s.groqApiKey },
+      body: form,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status + " — " + (await res.text()));
+    const data = await res.json();
+    return (data.text || "").trim();
+  }
+
+  // fromFile: el audio venía de un archivo, no del micrófono. Viaja hasta onText
+  // para que el orquestador no aplique pegar/teclear sobre la app de atrás.
+  async function sendToGroq(blob, mode, forceExt, fromFile = false) {
+    const translate = mode === "translate";
+    cb.onStatus(translate ? "Traduciendo a inglés con Groq…" : "Transcribiendo con Groq…");
     try {
-      const res = await fetch(GROQ_BASE_URL + endpoint, {
-        method: "POST",
-        headers: { "Authorization": "Bearer " + s.groqApiKey },
-        body: form,
-      });
-      if (!res.ok) throw new Error("HTTP " + res.status + " — " + (await res.text()));
-      const data = await res.json();
+      const text = await callGroq(blob, mode, forceExt);
       // await: onText aplica la acción (pegar/teclear) y puede tardar. Esperarlo
       // hace que sendToGroq no resuelva antes de que la acción termine, para que
       // quien llama sepa cuándo terminó de verdad todo el flujo.
-      await cb.onText((data.text || "").trim(), mode, { fromFile });
+      await cb.onText(text, mode, { fromFile });
     } catch (e) {
       cb.onError("Error: " + e.message);
       cb.onStatus("");
     }
   }
 
-  window.VLTranscription = { configure, start, stop, isRecording, releaseStream, transcribeFile };
+  // Transcribe UN trozo y DEVUELVE el texto (null si falló), sin tocar el estado
+  // ni disparar onText. Lo usa el orquestador para los archivos partidos en
+  // chunks: necesita ir juntando el texto y manejar el avance por su cuenta.
+  async function transcribeToText(bytes, ext, mode = "transcribe") {
+    const s = cb.getSettings();
+    if (!s.groqApiKey) { cb.onError("⚠️ Falta tu API key de Groq. Abrí ⚙ y pegala."); return null; }
+    const blob = new Blob([bytes], { type: MIME_BY_EXT[ext] || "application/octet-stream" });
+    try {
+      return await callGroq(blob, mode, ext);
+    } catch (e) {
+      cb.onError("Error: " + e.message);
+      return null;
+    }
+  }
+
+  window.VLTranscription = {
+    configure, start, stop, isRecording, releaseStream,
+    transcribeFile, transcribeToText,
+  };
 })();

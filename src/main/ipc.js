@@ -8,32 +8,94 @@
 const { ipcMain, clipboard, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const settings = require("./settings");
 const hotkeys = require("./hotkeys");
 const typing = require("./typing");
 const windowMod = require("./window");
+const audio = require("./audio");
 
 // Formatos que acepta Whisper de Groq. .ogg/.opus son los de las notas de voz de
 // WhatsApp; el resto entra igual porque el endpoint los soporta.
 const AUDIO_EXTS = ["ogg", "opus", "oga", "m4a", "mp3", "mp4", "wav", "webm", "mpeg", "mpga", "flac"];
 
+// Video: no se sube nunca tal cual (pesa muchísimo). Con ffmpeg se le extrae el
+// audio; sin ffmpeg no hay nada que hacer y se avisa.
+const VIDEO_EXTS = ["mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "mpeg", "mpg", "3gp"];
+
+// Extensiones que el diálogo ofrece: audio + video juntos.
+const PICKABLE_EXTS = [...new Set([...AUDIO_EXTS, ...VIDEO_EXTS])];
+
 // Límite de la API de Groq (25 MB). Cortamos acá para no gastar una subida que va
 // a fallar del otro lado con un error mucho menos claro.
 const MAX_BYTES = 25 * 1024 * 1024;
 
-// Lee un audio del disco y lo devuelve como bytes para que el renderer arme el Blob
-// y lo mande a Groq con el mismo camino que una grabación.
+// Valida el archivo y decide CÓMO transcribirlo, sin convertir nada todavía.
+// Devuelve el plan para que el renderer lo muestre y pida confirmación si hace
+// falta (los archivos largos tardan y gastan API, así que no se arranca a ciegas):
+//   { ok, name, ext, isVideo, needsFfmpeg?, direct?, duration?, parts?, sizeMB }
+async function planAudioFile(filePath) {
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (e) {
+    if (e.code === "ENOENT") return { ok: false, error: "El archivo ya no está en esa ubicación." };
+    if (e.code === "EACCES" || e.code === "EPERM") return { ok: false, error: "Sin permisos para leer ese archivo." };
+    return { ok: false, error: "No se pudo leer el archivo: " + e.message };
+  }
+
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const name = path.basename(filePath);
+  const known = AUDIO_EXTS.includes(ext) || VIDEO_EXTS.includes(ext);
+  // Provisorio por extensión: si hace falta ffprobe lo corrige con la verdad del
+  // archivo (un .mp4 puede ser solo audio, y un .webm cualquiera de las dos cosas).
+  let isVideo = VIDEO_EXTS.includes(ext) && !AUDIO_EXTS.includes(ext);
+
+  if (!known) {
+    return { ok: false, error: `Formato no soportado (.${ext}). Usá audio (${AUDIO_EXTS.join(", ")}) o video (${VIDEO_EXTS.join(", ")}).` };
+  }
+  if (stat.size === 0) return { ok: false, error: "El archivo está vacío." };
+
+  const sizeMB = stat.size / 1048576;
+  const base = { ok: true, name, ext, isVideo, sizeMB };
+
+  // Camino rápido: audio chico y en un formato que Groq acepta tal cual. Se sube
+  // sin tocar, así una nota de voz de WhatsApp no depende de tener ffmpeg.
+  if (!isVideo && stat.size <= MAX_BYTES && !audio.isAvailable()) {
+    return { ...base, direct: true };
+  }
+  const chunkMinutes = settings.load().chunkMinutes;
+
+  if (!isVideo && stat.size <= MAX_BYTES) {
+    // Con ffmpeg disponible igual medimos la duración: si es largo hay que partirlo
+    // aunque pese poco (Opus comprime tanto que 1 h entra en pocos MB).
+    const info = await audio.inspect(filePath, chunkMinutes);
+    if (!info.ok) return { ...base, direct: true }; // no se pudo medir: intentamos directo
+    if (info.parts <= 1) {
+      return { ...base, direct: true, duration: info.duration, parts: 1 };
+    }
+    return { ...base, isVideo: !!info.hasVideo, direct: false, duration: info.duration, parts: info.parts };
+  }
+
+  // A partir de acá hace falta ffmpeg sí o sí: es video, o pesa más de 25 MB.
+  if (!audio.isAvailable()) {
+    // Sin ffmpeg no podemos mirar dentro del archivo, así que acá la extensión es
+    // todo lo que tenemos para explicar por qué hace falta.
+    const motivo = VIDEO_EXTS.includes(ext)
+      ? `Es un video (.${ext}), así que hay que extraerle el audio.`
+      : `Pesa ${sizeMB.toFixed(1)} MB y el máximo de Groq es 25 MB, así que hay que comprimirlo.`;
+    return { ok: false, needsFfmpeg: true, name, error: `${motivo} ${audio.INSTALL_HINT}` };
+  }
+
+  const info = await audio.inspect(filePath, chunkMinutes);
+  if (!info.ok) return { ok: false, needsFfmpeg: info.needsFfmpeg, name, error: info.error };
+  return { ...base, isVideo: !!info.hasVideo, direct: false, duration: info.duration, parts: info.parts };
+}
+
+// Lee un audio tal cual del disco (camino directo, sin ffmpeg).
 function readAudioFile(filePath) {
   try {
     const ext = path.extname(filePath).slice(1).toLowerCase();
-    if (!AUDIO_EXTS.includes(ext)) {
-      return { ok: false, error: `Formato no soportado (.${ext}). Usá ${AUDIO_EXTS.join(", ")}.` };
-    }
-    const stat = fs.statSync(filePath);
-    if (stat.size === 0) return { ok: false, error: "El archivo está vacío." };
-    if (stat.size > MAX_BYTES) {
-      return { ok: false, error: `El archivo pesa ${(stat.size / 1048576).toFixed(1)} MB y el máximo de Groq es 25 MB.` };
-    }
     const buf = fs.readFileSync(filePath);
     // Uint8Array viaja por IPC como bytes (estructurado), sin pasar por base64.
     return { ok: true, name: path.basename(filePath), ext, bytes: new Uint8Array(buf) };
@@ -78,7 +140,9 @@ function registerIpc() {
     else hotkeys.register(settings.load());
   });
 
-  // ---- Audio desde archivo (notas de voz de WhatsApp, etc.) ----
+  // ---- Audio desde archivo (notas de voz, grabaciones largas, video) ----
+  // Flujo: pick/plan -> (el renderer confirma si es largo) -> prepare -> partes.
+  //
   // El diálogo es nativo (no <input type=file>) porque la píldora corre con
   // focusable=false y un input de archivo dentro de la ventana no se lleva bien
   // con eso. Se hace focusable mientras el diálogo está abierto y se restaura.
@@ -89,15 +153,18 @@ function registerIpc() {
     hotkeys.disable(); // que el atajo no dispare grabación mientras elegís archivo
     try {
       const res = await dialog.showOpenDialog(win, {
-        title: "Elegí un audio para transcribir",
+        title: "Elegí un audio o video para transcribir",
         properties: ["openFile"],
         filters: [
+          { name: "Audio y video", extensions: PICKABLE_EXTS },
           { name: "Audio", extensions: AUDIO_EXTS },
+          { name: "Video", extensions: VIDEO_EXTS },
           { name: "Todos los archivos", extensions: ["*"] },
         ],
       });
       if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
-      return readAudioFile(res.filePaths[0]);
+      const p = await planAudioFile(res.filePaths[0]);
+      return { ...p, path: res.filePaths[0] };
     } finally {
       if (win && !wasFocusable) windowMod.setFocusable(false);
       // Solo re-activamos atajos si la config no está tomando el foco.
@@ -106,10 +173,52 @@ function registerIpc() {
   });
 
   // Drag & drop: el renderer solo puede pasarnos la ruta del archivo soltado.
+  ipcMain.handle("audio:plan", async (_e, filePath) => {
+    if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
+    const p = await planAudioFile(filePath);
+    return { ...p, path: filePath };
+  });
+
+  // Camino directo: audio chico que Groq acepta tal cual, sin pasar por ffmpeg.
   ipcMain.handle("audio:read", (_e, filePath) => {
     if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
     return readAudioFile(filePath);
   });
+
+  // Camino largo: extrae audio del video, comprime a Opus y parte en trozos
+  // cortando en silencios. Informa el avance por "audio:progress" porque un
+  // archivo de 1 h tarda y la píldora tiene que mostrar algo mientras tanto.
+  ipcMain.handle("audio:prepare", async (e, filePath) => {
+    if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
+    const send = (payload) => {
+      if (!e.sender.isDestroyed()) e.sender.send("audio:progress", payload);
+    };
+    const r = await audio.prepare(filePath, send, settings.load().chunkMinutes);
+    if (!r.ok) return r;
+    // tmpDir vuelve al renderer solo para que pueda pedir su borrado al terminar.
+    return { ok: true, tmpDir: r.tmpDir, duration: r.duration, parts: r.parts };
+  });
+
+  // Borra los temporales una vez transcriptas todas las partes.
+  ipcMain.handle("audio:cleanup", (_e, tmpDir) => {
+    // Solo permitimos borrar directorios que creamos nosotros (mkdtemp en el temp
+    // del sistema con prefijo vozlibre-). Sin este chequeo, un tmpDir manipulado
+    // podría borrar cualquier carpeta del disco.
+    if (typeof tmpDir !== "string") return { ok: false };
+    const base = fs.realpathSync(os.tmpdir());
+    const target = path.resolve(tmpDir);
+    if (!target.startsWith(base) || !path.basename(target).startsWith("vozlibre-")) {
+      return { ok: false, error: "Ruta temporal no reconocida." };
+    }
+    audio.cleanup(target);
+    return { ok: true };
+  });
+
+  // ¿Está ffmpeg? El renderer lo usa para avisar antes de que falle.
+  ipcMain.handle("audio:ffmpeg-status", () => ({
+    available: audio.isAvailable(),
+    hint: audio.INSTALL_HINT,
+  }));
 
   // ---- Atajos ----
   ipcMain.handle("shortcut:register", () => hotkeys.register(settings.load()));

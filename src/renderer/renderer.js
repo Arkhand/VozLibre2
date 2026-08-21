@@ -38,20 +38,81 @@
   }
 
   // ---- Audio desde archivo (📎 o drag & drop) ----
-  // Recibe lo que devuelve el main ({ok, name, ext, bytes} | {ok:false, ...}) y lo
-  // manda a transcribir. transcribeFile marca el origen, así que el resultado se
-  // muestra sin aplicar pegar/teclear (ver applyAction).
-  async function transcribeFromFileResult(r) {
-    if (!r || r.canceled) return;
-    if (!r.ok) { UI.setError(r.error || "No se pudo abrir el archivo."); UI.setStatus(""); return; }
+  // El main manda un PLAN (duración, si es video, en cuántas partes saldría) sin
+  // haber convertido nada. Con eso decidimos el camino:
+  //   - direct: audio chico y compatible -> se sube tal cual (no necesita ffmpeg).
+  //   - largo/video -> se confirma con el usuario, ffmpeg extrae+comprime+parte,
+  //     y se transcribe parte por parte concatenando el texto.
+  // El resultado nunca dispara pegar/teclear (ver applyAction).
+  async function transcribeFromPlan(plan) {
+    if (!plan || plan.canceled) return;
+    if (!plan.ok) {
+      UI.setStatus("");
+      UI.setError(plan.error || "No se pudo abrir el archivo.");
+      return;
+    }
+
     UI.setFileBusy(true);
     UI.setError("");
-    UI.setStatus(`Leyendo ${r.name}…`);
     try {
-      await TR.transcribeFile(r.bytes, r.ext, "transcribe");
+      // --- Camino directo: nota de voz normal, sin ffmpeg de por medio ---
+      if (plan.direct) {
+        UI.setStatus(`Leyendo ${plan.name}…`);
+        const r = await window.pill.readAudio(plan.path);
+        if (!r.ok) { UI.setStatus(""); UI.setError(r.error); return; }
+        await TR.transcribeFile(r.bytes, r.ext, "transcribe");
+        return;
+      }
+
+      // --- Camino largo: confirmar antes de gastar tiempo y API ---
+      const ok = await UI.askFileConfirm(plan);
+      if (!ok) { UI.setStatus(""); return; }
+
+      UI.setStatus(plan.isVideo ? "Extrayendo el audio…" : "Comprimiendo el audio…");
+      UI.setProgress(0);
+      const prep = await window.pill.prepareAudio(plan.path);
+      UI.setProgress(null);
+      if (!prep.ok) { UI.setStatus(""); UI.setError(prep.error); return; }
+
+      try {
+        await transcribeParts(prep.parts);
+      } finally {
+        // Los trozos temporales se borran siempre, aunque falle a mitad.
+        await window.pill.cleanupAudio(prep.tmpDir);
+      }
     } finally {
       UI.setFileBusy(false);
+      UI.setProgress(null);
     }
+  }
+
+  // Transcribe las partes EN SERIE (no en paralelo: Groq tiene rate limits y así
+  // el texto sale en orden) y va mostrando lo que lleva acumulado, para que en un
+  // archivo largo veas avanzar el resultado en vez de esperar a ciegas.
+  async function transcribeParts(parts) {
+    const trozos = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      UI.setStatus(`Transcribiendo parte ${i + 1} de ${parts.length}…`);
+      UI.setProgress(i / parts.length);
+
+      const text = await TR.transcribeToText(p.bytes, p.ext, "transcribe");
+      if (text === null) {
+        // Falló una parte: conservamos lo transcripto hasta acá en vez de perder todo.
+        if (trozos.length) {
+          UI.setResult(trozos.join(" "));
+          UI.setError(`Falló la parte ${i + 1} de ${parts.length}. Arriba está lo que sí se transcribió.`);
+        }
+        UI.setStatus("");
+        UI.setProgress(null);
+        return;
+      }
+      if (text) trozos.push(text);
+      UI.setResult(trozos.join(" ")); // avance visible parte a parte
+    }
+
+    UI.setProgress(null);
+    await applyAction(trozos.join(" "), true);
   }
 
   // ---- Conectar Transcription con la UI ----
@@ -83,12 +144,12 @@
       UI.closeConfig();   // guardar cierra el panel de config
     },
     onPickFile: async () => {
-      const r = await window.pill.pickAudio();
-      await transcribeFromFileResult(r);
+      const plan = await window.pill.pickAudio();
+      await transcribeFromPlan(plan);
     },
     onDropFile: async (file) => {
-      const r = await window.pill.readDroppedAudio(file);
-      await transcribeFromFileResult(r);
+      const plan = await window.pill.planDroppedAudio(file);
+      await transcribeFromPlan(plan);
     },
     onCopy: async (text) => {
       await window.pill.copyToClipboard(text);
@@ -124,6 +185,19 @@
     if (UI.isConfigOpen() || !TR.isRecording()) return;
     if (mode && mode !== activeMode) return;
     TR.stop();
+  });
+
+  // ---- Avance de ffmpeg (archivos largos) ----
+  // El main avisa en qué etapa va: convertir (con % real), detectar silencios y
+  // cortar. Sin esto la píldora se queda muda varios minutos con un mp4 de 1 h.
+  window.pill.onAudioProgress((p) => {
+    if (!p) return;
+    if (p.stage === "convert") {
+      if (typeof p.progress === "number") UI.setProgress(p.progress);
+      return;
+    }
+    if (p.stage === "silence") { UI.setStatus("Buscando los silencios para cortar…"); UI.setProgress(null); return; }
+    if (p.stage === "split") { UI.setStatus(`Cortando en ${p.total} partes…`); return; }
   });
 
   // ---- Init ----

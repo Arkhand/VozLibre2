@@ -42,13 +42,22 @@ contextBridge.exposeInMainWorld("pill", {
   // Ambos resuelven {ok, name, ext, bytes} | {ok:false, error|canceled}.
   pickAudio: () => ipcRenderer.invoke("audio:pick"),
   readAudio: (filePath) => ipcRenderer.invoke("audio:read", filePath),
-  // Resuelve la ruta de un File soltado y lo lee de una (el renderer no puede
-  // sacar la ruta por su cuenta con contextIsolation).
-  readDroppedAudio: (file) => {
+  // Analiza el archivo sin convertirlo: duración, si es video y en cuántas partes
+  // saldría. El renderer con esto decide si preguntar antes de gastar API.
+  planAudio: (filePath) => ipcRenderer.invoke("audio:plan", filePath),
+  // Resuelve la ruta de un File soltado y lo analiza (el renderer no puede sacar
+  // la ruta por su cuenta con contextIsolation).
+  planDroppedAudio: (file) => {
     const p = filePathOf(file);
     if (!p) return Promise.resolve({ ok: false, error: "Arrastrá el archivo desde una carpeta del disco." });
-    return ipcRenderer.invoke("audio:read", p);
+    return ipcRenderer.invoke("audio:plan", p);
   },
+  // Extrae audio del video, comprime a Opus y parte en trozos por silencios.
+  prepareAudio: (filePath) => ipcRenderer.invoke("audio:prepare", filePath),
+  cleanupAudio: (tmpDir) => ipcRenderer.invoke("audio:cleanup", tmpDir),
+  ffmpegStatus: () => ipcRenderer.invoke("audio:ffmpeg-status"),
+  // Avance de la conversión (ffmpeg tarda con archivos largos).
+  onAudioProgress: (cb) => ipcRenderer.on("audio:progress", (_e, p) => cb(p)),
 
   // Atajo global
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),

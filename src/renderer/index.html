@@ -25,7 +25,7 @@
         <span class="timer" id="timer">00:00</span>
       </div>
 
-      <button class="icon-btn" id="fileBtn" title="Transcribir un audio (.ogg de WhatsApp, .mp3, .m4a…)">📎</button>
+      <button class="icon-btn" id="fileBtn" title="Transcribir un audio o video (.ogg de WhatsApp, .mp4, .mp3…)">📎</button>
       <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
       <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)">✕</button>
     </div>
@@ -39,6 +39,9 @@
       </div>
       <div class="err" id="err"></div>
     </div>
+
+    <!-- Progreso de la conversión con ffmpeg (archivos largos / video). -->
+    <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
 
     <!-- Panel de CONFIGURACIÓN (se abre con ⚙). Los campos scrollean; el botón
          Guardar queda fijo abajo (fuera del scroll). -->
@@ -82,6 +85,18 @@
       </div>
 
       <div class="cfg-field">
+        <label for="cfgChunk">Partes de los audios largos</label>
+        <select id="cfgChunk">
+          <option value="5">5 minutos por parte</option>
+          <option value="10">10 minutos por parte (recomendado)</option>
+          <option value="15">15 minutos por parte</option>
+          <option value="20">20 minutos por parte</option>
+          <option value="30">30 minutos por parte</option>
+        </select>
+        <small class="cfg-hint">Los audios largos se cortan en silencios y se transcriben por partes. Partes más largas = menos pedidos a la API, pero más riesgo de que Groq las rechace.</small>
+      </div>
+
+      <div class="cfg-field">
         <label for="cfgShortcut">Atajo: dictar (idioma de arriba)</label>
         <input type="text" id="cfgShortcut" placeholder="Hacé clic y presioná la combinación" readonly>
         <small class="cfg-hint">Mantenelo presionado para grabar desde cualquier app.</small>
@@ -109,12 +124,23 @@
       </div>
     </div>
 
+    <!-- Confirmación para archivos largos: antes de convertir y gastar API se
+         muestra duración y en cuántas partes se va a cortar. -->
+    <div class="panel file-confirm" id="fileConfirm" hidden>
+      <p class="fc-title" id="fcTitle">Archivo largo</p>
+      <p class="fc-detail" id="fcDetail"></p>
+      <div class="panel-foot">
+        <button class="sec" id="fcCancel">Cancelar</button>
+        <button class="sec primary" id="fcOk">Transcribir</button>
+      </div>
+    </div>
+
     <!-- Capa de "soltá el audio acá": se muestra al arrastrar un archivo sobre
          la píldora. Cubre toda la píldora y no intercepta eventos (pointer-events
          none) para que el dragleave del contenedor no se dispare de más. -->
     <div class="drop-overlay" id="dropOverlay">
       <span class="drop-icon">🎧</span>
-      <span class="drop-text">Soltá el audio para transcribirlo</span>
+      <span class="drop-text">Soltá el audio o video para transcribirlo</span>
     </div>
   </div>
 

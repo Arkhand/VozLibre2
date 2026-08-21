@@ -397,3 +397,46 @@ html, body {
   background: rgba(244, 63, 94, 0.20);
   border-color: rgba(244, 63, 94, 0.7);
 }
+
+/* ----- Confirmación de archivo largo -----
+   Antes de convertir un archivo grande (que tarda y gasta API) se muestra qué se
+   va a hacer. Igual que .cfg-confirm, mientras está visible tapa el resto para
+   que el cuadro siempre entre en la ventana. */
+.file-confirm { display: none; padding-top: 10px; }
+.pill.file-confirming .file-confirm { display: block; }
+.file-confirm[hidden] { display: none !important; }
+/* Con la confirmación abierta, el resto de los paneles se esconde. */
+.pill.file-confirming #resultPanel,
+.pill.file-confirming #configPanel { display: none; }
+
+.fc-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fc-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+#fileConfirm .panel-foot { justify-content: flex-end; }
+
+/* Barra de progreso de la conversión (ffmpeg con archivos largos). */
+.progress {
+  display: none;
+  height: 4px;
+  margin: 0 12px 10px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+.progress.show { display: block; }
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+  transition: width .2s ease;
+}

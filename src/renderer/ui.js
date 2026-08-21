@@ -11,10 +11,15 @@
   const el = {
     pill: $("pill"), recBtn: $("recBtn"), configBtn: $("configBtn"), closeBtn: $("closeBtn"),
     fileBtn: $("fileBtn"),
+    // Confirmacion de archivo largo + progreso de conversion
+    fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
+    fcCancel: $("fcCancel"), fcOk: $("fcOk"),
+    progress: $("progress"), progressBar: $("progressBar"),
     barCenter: $("barCenter"), status: $("status"), timer: $("timer"),
     result: $("result"), copyBtn: $("copyBtn"), clearBtn: $("clearBtn"), err: $("err"),
     // Config
     cfgApiKey: $("cfgApiKey"), cfgMic: $("cfgMic"), cfgLang: $("cfgLang"), cfgAction: $("cfgAction"),
+    cfgChunk: $("cfgChunk"),
     cfgShortcut: $("cfgShortcut"), cfgShortcutTranslate: $("cfgShortcutTranslate"),
     cfgSave: $("cfgSave"), cfgSaved: $("cfgSaved"), cfgTest: $("cfgTest"),
     configPanel: $("configPanel"),
@@ -113,6 +118,62 @@
   function isConfigOpen() { return configOpen; }
 
   // ---------------------------------------------------------------------------
+  // Archivos largos: confirmación previa y progreso de conversión
+  // ---------------------------------------------------------------------------
+  // Un mp4 de 1 h tarda en convertirse y gasta varias llamadas a la API, así que
+  // antes de arrancar se muestra qué se va a hacer y se espera el OK.
+  let confirmResolve = null;
+
+  function fmtDuration(seconds) {
+    const s = Math.round(seconds || 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h} h ${String(m).padStart(2, "0")} min`;
+    if (m > 0) return `${m} min ${String(sec).padStart(2, "0")} s`;
+    return `${sec} s`;
+  }
+
+  // Muestra el cuadro y resuelve true/false según lo que elija el usuario.
+  function askFileConfirm(plan) {
+    el.fcTitle.textContent = plan.isVideo ? "🎬 Video largo" : "🎧 Audio largo";
+    const partes = plan.parts > 1
+      ? ` Se va a cortar en ${plan.parts} partes (en silencios) y se transcribe cada una.`
+      : "";
+    const extrae = plan.isVideo ? " Se le extrae el audio y se comprime." : " Se comprime a Opus.";
+    el.fcDetail.textContent =
+      `${plan.name} — ${fmtDuration(plan.duration)}, ${plan.sizeMB.toFixed(1)} MB.` +
+      extrae + partes + " Esto consume API.";
+
+    el.fileConfirm.hidden = false;
+    el.pill.classList.add("file-confirming");
+    refreshLayout();
+
+    return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+
+  function closeFileConfirm(answer) {
+    el.fileConfirm.hidden = true;
+    el.pill.classList.remove("file-confirming");
+    refreshLayout();
+    const r = confirmResolve;
+    confirmResolve = null;
+    if (r) r(answer);
+  }
+
+  // Barra de progreso de ffmpeg (0..1). Con null se oculta.
+  function setProgress(value) {
+    if (value === null || value === undefined) {
+      el.progress.classList.remove("show");
+      el.progressBar.style.width = "0%";
+    } else {
+      el.progress.classList.add("show");
+      el.progressBar.style.width = Math.round(Math.max(0, Math.min(1, value)) * 100) + "%";
+    }
+    refreshLayout();
+  }
+
+  // ---------------------------------------------------------------------------
   // Config: cargar/guardar, micrófonos, atajos
   // ---------------------------------------------------------------------------
   // Nombres legibles de keycodes uiohook comunes (para el input). Los que no estén
@@ -138,6 +199,7 @@
     el.cfgApiKey.value = settings.groqApiKey || "";
     el.cfgLang.value = settings.lang ?? "es";
     el.cfgAction.value = settings.action || "show";
+    el.cfgChunk.value = String(settings.chunkMinutes ?? 10);
     bindTranscribe = (settings.shortcut && typeof settings.shortcut === "object") ? settings.shortcut : null;
     bindTranslate = (settings.shortcutTranslate && typeof settings.shortcutTranslate === "object") ? settings.shortcutTranslate : null;
     el.cfgShortcut.value = bindLabel(bindTranscribe) || "(sin asignar — hacé clic)";
@@ -168,6 +230,7 @@
       lang: el.cfgLang.value,
       deviceId: el.cfgMic.value,
       action: el.cfgAction.value,
+      chunkMinutes: Number(el.cfgChunk.value) || 10,
       shortcut: bindTranscribe,
       shortcutTranslate: bindTranslate,
     };
@@ -265,7 +328,7 @@
     el.cfgConfirmDiscard.addEventListener("click", () => closeConfig());     // descartar y cerrar
 
     // Cualquier edición de un campo marca cambios sin guardar.
-    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction].forEach((node) => {
+    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgChunk].forEach((node) => {
       node.addEventListener("input", markDirty);
       node.addEventListener("change", markDirty);
     });
@@ -282,6 +345,8 @@
     attachShortcutCapture(el.cfgShortcutTranslate, (b) => { bindTranslate = b; markDirty(); });
 
     el.fileBtn.addEventListener("click", () => cb.onPickFile());
+    el.fcOk.addEventListener("click", () => closeFileConfirm(true));
+    el.fcCancel.addEventListener("click", () => closeFileConfirm(false));
     bindDropZone();
   }
 
@@ -338,5 +403,7 @@
     setTestBusy: (busy) => { el.cfgTest.disabled = busy; },
     // 📎 deshabilitado mientras se sube/transcribe un archivo (evita dobles envíos).
     setFileBusy: (busy) => { el.fileBtn.disabled = busy; el.fileBtn.classList.toggle("busy", !!busy); },
+    // Archivos largos: confirmación previa + progreso de la conversión.
+    askFileConfirm, closeFileConfirm, setProgress, fmtDuration,
   };
 })();
