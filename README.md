@@ -41,10 +41,6 @@ La clave se guarda en tu PC (`%APPDATA%\VozLibre2\settings.json`) y no viaja a n
 
 ## Uso básico: dictar
 
-<div align="center">
-<img src="docs/img/02-resultado.png" width="420" alt="Texto transcripto en la píldora">
-</div>
-
 Es **push-to-talk**: mantenés presionado el atajo mientras hablás y lo soltás al terminar.
 
 | Atajo | Qué hace |
@@ -53,6 +49,10 @@ Es **push-to-talk**: mantenés presionado el atajo mientras hablás y lo soltás
 | `F9` (configurable) | Dicta y **traduce a inglés** |
 
 Los dos atajos se reasignan desde ⚙ presionando la combinación que quieras. Funcionan por tecla **física**, así que andan con cualquier distribución de teclado.
+
+<div align="center">
+<img src="docs/img/05-atajos.png" width="420" alt="Asignación de atajos en la configuración">
+</div>
 
 Si no se detecta voz, la app avisa y **no gasta API**.
 
@@ -92,7 +92,7 @@ El texto de un archivo **nunca** se pega ni se teclea automáticamente: estás m
 ### 🎙️ Grabar reuniones
 
 <div align="center">
-<img src="docs/img/03-reunion.png" width="420" alt="Confirmación antes de grabar una reunión">
+<img src="docs/img/02-reunion.png" width="420" alt="Confirmación antes de grabar una reunión">
 </div>
 
 Graba **dos pistas por separado** y las intercala por tiempo para reconstruir la conversación:
@@ -109,7 +109,7 @@ Se transcribe por partes **mientras grabás**, así que al cortar el texto ya es
 ### 🕘 Historial
 
 <div align="center">
-<img src="docs/img/04-historial.png" width="420" alt="Historial de transcripciones">
+<img src="docs/img/03-historial.png" width="420" alt="Historial de transcripciones">
 </div>
 
 Cada archivo transcripto se guarda como un `.md` en `Documentos\VozLibre` (carpeta configurable). Desde el historial abrís el archivo, su carpeta, o lo borrás — el borrado va a la **Papelera de reciclaje**, no se pierde.
@@ -127,7 +127,7 @@ En audios largos partidos en tramos puede agregar encabezados con marca de tiemp
 ## Configuración
 
 <div align="center">
-<img src="docs/img/05-config.png" width="420" alt="Panel de configuración">
+<img src="docs/img/04-config.png" width="420" alt="Panel de configuración">
 </div>
 
 | Opción | Para qué |
