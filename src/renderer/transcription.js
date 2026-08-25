@@ -195,8 +195,13 @@
     // Los SEGMENTOS traen los puntajes de calidad (para descartar invenciones) y
     // las PALABRAS traen los tiempos finos (para cortar líneas en las pausas
     // reales). Se piden los dos: es un parámetro más, no una llamada más.
-    form.append("timestamp_granularities[]", "segment");
-    form.append("timestamp_granularities[]", "word");
+    // Solo en /audio/transcriptions: el endpoint de translations rechaza el
+    // parámetro con un 400 (unknown param). Allá nos quedamos con los segmentos
+    // que verbose_json ya trae, y cleanSegments corta sin tiempos por palabra.
+    if (!translate) {
+      form.append("timestamp_granularities[]", "segment");
+      form.append("timestamp_granularities[]", "word");
+    }
     // El endpoint de translations sale SIEMPRE en inglés (no se manda 'language').
     //
     // OJO con 'language': no es una pista, es una ORDEN. Whisper devuelve el texto
