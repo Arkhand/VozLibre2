@@ -52,7 +52,8 @@ if (tok.status === 0 && tok.stdout.trim()) {
 
 // 3. Publicar código que no está en el repo es la receta para "me anda raro":
 //    la release lleva notas generadas de los commits y el tag apunta al HEAD remoto.
-const dirty = git(["status", "--porcelain"]);
+// Solo archivos versionados: un archivo suelto sin trackear no es código sin publicar.
+const dirty = git(["status", "--porcelain", "--untracked-files=no"]);
 if (dirty && !allowDirty) {
   fail("Hay cambios sin commitear. Commiteá y pusheá primero (o pasá --dirty si sabés lo que hacés).");
 }
