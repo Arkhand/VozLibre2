@@ -39,6 +39,17 @@ if (spawnSync("gh", ["auth", "status"], { stdio: "ignore" }).status !== 0) {
   fail("El CLI de GitHub no está instalado o no está logueado (gh auth login).");
 }
 
+// 2b. Con varias cuentas en gh, la activa puede no ser la dueña del repo. Si el
+//     owner está logueado, se usa SU token para esta corrida (GH_TOKEN), sin
+//     cambiar la cuenta activa.
+const owner = repo().split("/")[0];
+const tok = spawnSync("gh", ["auth", "token", "--user", owner], { encoding: "utf8" });
+const env = { ...process.env };
+if (tok.status === 0 && tok.stdout.trim()) {
+  env.GH_TOKEN = tok.stdout.trim();
+  console.log(`Usando la cuenta ${owner} de gh para publicar.`);
+}
+
 // 3. Publicar código que no está en el repo es la receta para "me anda raro":
 //    la release lleva notas generadas de los commits y el tag apunta al HEAD remoto.
 const dirty = git(["status", "--porcelain"]);
@@ -52,7 +63,7 @@ try {
 } catch { console.warn("⚠ No se pudo comparar con origin; sigo igual."); }
 
 // 4. Que no exista ya la release (subir dos veces la misma versión es un error de flujo).
-const exists = spawnSync("gh", ["release", "view", tag, "-R", repo()], { stdio: "ignore" }).status === 0;
+const exists = spawnSync("gh", ["release", "view", tag, "-R", repo()], { stdio: "ignore", env }).status === 0;
 if (exists) fail(`La release ${tag} ya existe en ${repo()}. Subí la versión (npm run dist) o borrala en GitHub.`);
 
 console.log(`Publicando ${tag} en ${repo()} con ${path.basename(exe)} (${(fs.statSync(exe).size / 1048576).toFixed(1)} MB)…`);
@@ -61,5 +72,5 @@ execFileSync("gh", [
   "-R", repo(),
   "--title", `VozLibre2 ${version}`,
   "--generate-notes",
-], { stdio: "inherit" });
+], { stdio: "inherit", env });
 console.log(`✓ Release ${tag} publicada. La app va a avisar de esta versión a quien tenga una anterior.`);
