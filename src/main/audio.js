@@ -17,6 +17,7 @@ const { spawn, execFile, execFileSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { t } = require("../i18n/i18n");
 
 // Audio de destino: lo que Whisper aprovecha, al mínimo peso posible.
 const TARGET_RATE = 16000;   // Hz; Whisper remuestrea a 16k de todos modos
@@ -110,13 +111,51 @@ function locate(bin) {
 function ffmpegPath() { return locate("ffmpeg"); }
 function ffprobePath() { return locate("ffprobe"); }
 
+// Olvida lo encontrado (o no) para volver a buscar: después de instalar ffmpeg
+// con la app abierta, "Volver a comprobar" tiene que verlo sin reiniciar.
+function resetCache() { for (const k of Object.keys(resolved)) delete resolved[k]; }
+
+// Lanza la instalación con winget en una ventana de consola VISIBLE (puede pedir
+// permisos y tarda un rato): un proceso oculto que falla en silencio sería peor
+// que el aviso manual. El script es ASCII a propósito: la consola de Windows usa
+// otra página de códigos y los acentos saldrían rotos.
+function installFfmpeg() {
+  if (process.platform !== "win32") return { ok: false, error: t("La instalación automática solo está disponible en Windows.") };
+  const script = path.join(os.tmpdir(), "vozlibre-instalar-ffmpeg.cmd");
+  const lines = [
+    "@echo off",
+    "title VozLibre - instalar ffmpeg",
+    "echo Instalando ffmpeg con winget. Puede tardar unos minutos...",
+    "echo.",
+    "winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements",
+    "if errorlevel 1 (",
+    "  echo.",
+    "  echo No se pudo instalar. Proba a mano en una consola: winget install Gyan.FFmpeg",
+    ") else (",
+    "  echo.",
+    "  echo Listo. Volve a VozLibre y toca \"Ya lo instale, comprobar\".",
+    ")",
+    "echo.",
+    "pause",
+  ];
+  try {
+    fs.writeFileSync(script, lines.join("\r\n") + "\r\n", "ascii");
+    const child = spawn("cmd.exe", ["/c", "start", "", script], { detached: true, stdio: "ignore" });
+    child.unref();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // ¿Está disponible la preparación de audio? El renderer lo consulta para avisar
 // "instalá ffmpeg" en vez de fallar a mitad de camino.
 function isAvailable() { return !!ffmpegPath() && !!ffprobePath(); }
 
-const INSTALL_HINT =
+const INSTALL_HINT = t(
   "Para transcribir videos o audios largos hace falta ffmpeg. " +
-  "Instalalo con: winget install Gyan.FFmpeg — después reiniciá VozLibre.";
+  "Instalalo con: winget install Gyan.FFmpeg — después reiniciá VozLibre."
+);
 
 // ---------------------------------------------------------------------------
 // Helpers de proceso
@@ -136,7 +175,7 @@ function run(bin, args, { onStderr } = {}) {
       // ffmpeg escupe mucho ruido: nos quedamos con las últimas líneas, que son
       // donde suele estar la causa real.
       const tail = err.trim().split("\n").slice(-3).join(" ").slice(0, 300);
-      reject(new Error(tail || "ffmpeg salió con código " + code));
+      reject(new Error(tail || t("ffmpeg salió con código {code}", { code })));
     });
   });
 }
@@ -416,10 +455,10 @@ async function inspect(file, chunkMinutes) {
   if (!isAvailable()) return { ok: false, needsFfmpeg: true, error: INSTALL_HINT };
   try {
     if (!(await probeHasAudio(file))) {
-      return { ok: false, error: "Ese archivo no tiene pista de audio." };
+      return { ok: false, error: t("Ese archivo no tiene pista de audio.") };
     }
     const duration = await probeDuration(file);
-    if (duration === null) return { ok: false, error: "No se pudo leer la duración del archivo." };
+    if (duration === null) return { ok: false, error: t("No se pudo leer la duración del archivo.") };
     const chunkSeconds = chunkSecondsFrom(chunkMinutes);
     const parts = duration > splitThresholdFor(chunkSeconds) ? Math.ceil(duration / chunkSeconds) : 1;
     const hasVideo = await probeHasVideo(file);
@@ -515,7 +554,7 @@ async function prepare(file, onStage, chunkMinutes) {
     return { ok: true, tmpDir, duration: finalDuration, parts, silences };
   } catch (e) {
     cleanup(tmpDir);
-    return { ok: false, error: "No se pudo preparar el audio: " + e.message };
+    return { ok: false, error: t("No se pudo preparar el audio: {msg}", { msg: e.message }) };
   }
 }
 
@@ -526,7 +565,7 @@ function cleanup(tmpDir) {
 }
 
 module.exports = {
-  isAvailable, inspect, prepare, cleanup,
+  isAvailable, inspect, prepare, cleanup, resetCache, installFfmpeg,
   INSTALL_HINT, CHUNK_SECONDS, SPLIT_THRESHOLD_SECONDS,
   MIN_CHUNK_MINUTES, MAX_CHUNK_MINUTES, chunkSecondsFrom, splitThresholdFor,
   // expuestos para tests

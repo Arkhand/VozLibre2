@@ -5,7 +5,7 @@
  * Se llama una vez desde main.js (registerIpc).
  */
 
-const { ipcMain, clipboard, dialog, shell, session, desktopCapturer } = require("electron");
+const { app, ipcMain, clipboard, dialog, shell, session, desktopCapturer } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -16,6 +16,21 @@ const windowMod = require("./window");
 const audio = require("./audio");
 const format = require("./format");
 const history = require("./history");
+const log = require("./log");
+const update = require("./update");
+const autostart = require("./autostart");
+const { t } = require("../i18n/i18n");
+
+// Links que la píldora puede abrir en el navegador. Lista cerrada: el renderer
+// no puede pedir cualquier URL (una página cargada con contenido ajeno no debería
+// poder lanzar el navegador a donde quiera).
+const EXTERNAL_HOSTS = ["console.groq.com", "groq.com", "github.com", "claude.com", "docs.claude.com", "www.anthropic.com"];
+function isAllowedExternal(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && EXTERNAL_HOSTS.includes(u.hostname);
+  } catch { return false; }
+}
 
 // Formatos que acepta Whisper de Groq. .ogg/.opus son los de las notas de voz de
 // WhatsApp; el resto entra igual porque el endpoint los soporta.
@@ -41,9 +56,9 @@ async function planAudioFile(filePath) {
   try {
     stat = fs.statSync(filePath);
   } catch (e) {
-    if (e.code === "ENOENT") return { ok: false, error: "El archivo ya no está en esa ubicación." };
-    if (e.code === "EACCES" || e.code === "EPERM") return { ok: false, error: "Sin permisos para leer ese archivo." };
-    return { ok: false, error: "No se pudo leer el archivo: " + e.message };
+    if (e.code === "ENOENT") return { ok: false, error: t("El archivo ya no está en esa ubicación.") };
+    if (e.code === "EACCES" || e.code === "EPERM") return { ok: false, error: t("Sin permisos para leer ese archivo.") };
+    return { ok: false, error: t("No se pudo leer el archivo: {msg}", { msg: e.message }) };
   }
 
   const ext = path.extname(filePath).slice(1).toLowerCase();
@@ -54,9 +69,9 @@ async function planAudioFile(filePath) {
   let isVideo = VIDEO_EXTS.includes(ext) && !AUDIO_EXTS.includes(ext);
 
   if (!known) {
-    return { ok: false, error: `Formato no soportado (.${ext}). Usá audio (${AUDIO_EXTS.join(", ")}) o video (${VIDEO_EXTS.join(", ")}).` };
+    return { ok: false, error: t("Formato no soportado (.{ext}). Usá audio ({audio}) o video ({video}).", { ext, audio: AUDIO_EXTS.join(", "), video: VIDEO_EXTS.join(", ") }) };
   }
-  if (stat.size === 0) return { ok: false, error: "El archivo está vacío." };
+  if (stat.size === 0) return { ok: false, error: t("El archivo está vacío.") };
 
   const sizeMB = stat.size / 1048576;
   const base = { ok: true, name, ext, isVideo, sizeMB };
@@ -84,8 +99,8 @@ async function planAudioFile(filePath) {
     // Sin ffmpeg no podemos mirar dentro del archivo, así que acá la extensión es
     // todo lo que tenemos para explicar por qué hace falta.
     const motivo = VIDEO_EXTS.includes(ext)
-      ? `Es un video (.${ext}), así que hay que extraerle el audio.`
-      : `Pesa ${sizeMB.toFixed(1)} MB y el máximo de Groq es 25 MB, así que hay que comprimirlo.`;
+      ? t("Es un video (.{ext}), así que hay que extraerle el audio.", { ext })
+      : t("Pesa {mb} MB y el máximo de Groq es 25 MB, así que hay que comprimirlo.", { mb: sizeMB.toFixed(1) });
     return { ok: false, needsFfmpeg: true, name, error: `${motivo} ${audio.INSTALL_HINT}` };
   }
 
@@ -102,9 +117,9 @@ function readAudioFile(filePath) {
     // Uint8Array viaja por IPC como bytes (estructurado), sin pasar por base64.
     return { ok: true, name: path.basename(filePath), ext, bytes: new Uint8Array(buf) };
   } catch (e) {
-    if (e.code === "ENOENT") return { ok: false, error: "El archivo ya no está en esa ubicación." };
-    if (e.code === "EACCES" || e.code === "EPERM") return { ok: false, error: "Sin permisos para leer ese archivo." };
-    return { ok: false, error: "No se pudo leer el archivo: " + e.message };
+    if (e.code === "ENOENT") return { ok: false, error: t("El archivo ya no está en esa ubicación.") };
+    if (e.code === "EACCES" || e.code === "EPERM") return { ok: false, error: t("Sin permisos para leer ese archivo.") };
+    return { ok: false, error: t("No se pudo leer el archivo: {msg}", { msg: e.message }) };
   }
 }
 
@@ -117,15 +132,50 @@ function registerIpc() {
 
   // ---- Config (settings) ----
   ipcMain.handle("settings:load", () => settings.load());
+  ipcMain.handle("settings:models", () => settings.MODELS);
   ipcMain.handle("settings:save", (_e, partial) => {
     const next = settings.save(partial);
+    const has = (k) => partial && Object.prototype.hasOwnProperty.call(partial, k);
     // Si cambió algún atajo, re-registrar ambos en el hook.
-    const touchedShortcut = partial && (
-      Object.prototype.hasOwnProperty.call(partial, "shortcut") ||
-      Object.prototype.hasOwnProperty.call(partial, "shortcutTranslate")
-    );
-    if (touchedShortcut) hotkeys.register(next);
+    if (has("shortcut") || has("shortcutTranslate")) hotkeys.register(next);
+    // "Iniciar con Windows": se aplica en el momento (no espera al reinicio).
+    if (has("startWithWindows")) {
+      const r = autostart.apply(next);
+      console.log(`autostart: ${JSON.stringify(r)}`);
+    }
     return next;
+  });
+
+  // ---- Sistema: versión, log, links, inicio con Windows ----
+  ipcMain.handle("app:info", () => ({
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    platform: process.platform,
+    autostart: autostart.status(),
+  }));
+
+  // El renderer manda acá lo que muestra como error (y fallos de API): así el
+  // log del main es la única fuente cuando alguien pide ayuda.
+  ipcMain.on("log:write", (_e, level, msg) => log.fromRenderer(level, msg));
+  ipcMain.handle("log:open", async () => {
+    const dir = log.logDir();
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* seguimos: openPath dirá */ }
+    const err = await shell.openPath(dir);
+    return err ? { ok: false, error: err } : { ok: true, dir };
+  });
+
+  // Abrir un link en el navegador. Solo hosts conocidos (ver EXTERNAL_HOSTS).
+  ipcMain.handle("open:external", async (_e, url) => {
+    if (!isAllowedExternal(url)) return { ok: false, error: t("Link no permitido.") };
+    await shell.openExternal(url);
+    return { ok: true };
+  });
+
+  // Chequeo de versión contra las releases públicas de GitHub. Solo avisa.
+  ipcMain.handle("update:check", async () => {
+    const r = await update.check();
+    console.log(`update: ${JSON.stringify(r)}`);
+    return r;
   });
 
   // ---- Acciones de texto (pegar / teclear / portapapeles) ----
@@ -155,13 +205,13 @@ function registerIpc() {
     hotkeys.disable(); // que el atajo no dispare grabación mientras elegís archivo
     try {
       const res = await dialog.showOpenDialog(win, {
-        title: "Elegí un audio o video para transcribir",
+        title: t("Elegí un audio o video para transcribir"),
         properties: ["openFile"],
         filters: [
-          { name: "Audio y video", extensions: PICKABLE_EXTS },
-          { name: "Audio", extensions: AUDIO_EXTS },
-          { name: "Video", extensions: VIDEO_EXTS },
-          { name: "Todos los archivos", extensions: ["*"] },
+          { name: t("Audio y video"), extensions: PICKABLE_EXTS },
+          { name: t("Audio"), extensions: AUDIO_EXTS },
+          { name: t("Video"), extensions: VIDEO_EXTS },
+          { name: t("Todos los archivos"), extensions: ["*"] },
         ],
       });
       if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
@@ -176,14 +226,14 @@ function registerIpc() {
 
   // Drag & drop: el renderer solo puede pasarnos la ruta del archivo soltado.
   ipcMain.handle("audio:plan", async (_e, filePath) => {
-    if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
+    if (typeof filePath !== "string" || !filePath) return { ok: false, error: t("Ruta inválida.") };
     const p = await planAudioFile(filePath);
     return { ...p, path: filePath };
   });
 
   // Camino directo: audio chico que Groq acepta tal cual, sin pasar por ffmpeg.
   ipcMain.handle("audio:read", (_e, filePath) => {
-    if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
+    if (typeof filePath !== "string" || !filePath) return { ok: false, error: t("Ruta inválida.") };
     return readAudioFile(filePath);
   });
 
@@ -191,7 +241,7 @@ function registerIpc() {
   // cortando en silencios. Informa el avance por "audio:progress" porque un
   // archivo de 1 h tarda y la píldora tiene que mostrar algo mientras tanto.
   ipcMain.handle("audio:prepare", async (e, filePath) => {
-    if (typeof filePath !== "string" || !filePath) return { ok: false, error: "Ruta inválida." };
+    if (typeof filePath !== "string" || !filePath) return { ok: false, error: t("Ruta inválida.") };
     const send = (payload) => {
       if (!e.sender.isDestroyed()) e.sender.send("audio:progress", payload);
     };
@@ -210,7 +260,7 @@ function registerIpc() {
     const base = fs.realpathSync(os.tmpdir());
     const target = path.resolve(tmpDir);
     if (!target.startsWith(base) || !path.basename(target).startsWith("vozlibre-")) {
-      return { ok: false, error: "Ruta temporal no reconocida." };
+      return { ok: false, error: t("Ruta temporal no reconocida.") };
     }
     audio.cleanup(target);
     return { ok: true };
@@ -221,6 +271,19 @@ function registerIpc() {
     available: audio.isAvailable(),
     hint: audio.INSTALL_HINT,
   }));
+  // Volver a buscar (después de instalarlo con la app abierta).
+  ipcMain.handle("audio:ffmpeg-recheck", () => {
+    audio.resetCache();
+    const available = audio.isAvailable();
+    console.log(`ffmpeg recheck: ${available ? "encontrado" : "no encontrado"}`);
+    return { available, hint: audio.INSTALL_HINT };
+  });
+  // Lanzar la instalación con winget (ventana de consola visible).
+  ipcMain.handle("audio:ffmpeg-install", () => {
+    const r = audio.installFfmpeg();
+    console.log(`ffmpeg install: ${JSON.stringify(r)}`);
+    return r;
+  });
 
   // ---- Captura del audio del sistema (grabar reuniones) ----
   // Cuando el renderer llama a getDisplayMedia, Electron pregunta acá qué entregar.
@@ -261,7 +324,7 @@ function registerIpc() {
 
   ipcMain.handle("format:transcript", async (e, payload) => {
     const parts = Array.isArray(payload?.parts) ? payload.parts : [];
-    if (!parts.length) return { ok: false, error: "No hay texto para formatear." };
+    if (!parts.length) return { ok: false, error: t("No hay texto para formatear.") };
 
     const send = (payload2) => {
       if (!e.sender.isDestroyed()) e.sender.send("format:progress", payload2);
@@ -285,6 +348,8 @@ function registerIpc() {
       duration: payload?.duration || 0,
       language: payload?.language || "",
       text: payload?.text || "",
+      // Texto sin formatear: se guarda al lado del formateado (ver history.save).
+      rawText: payload?.rawText || "",
       formatted: !!payload?.formatted,
       partial: !!payload?.partial,
       failedCount: payload?.failedCount || 0,
@@ -293,21 +358,24 @@ function registerIpc() {
   });
 
   ipcMain.handle("history:list", () => ({ ok: true, entries: history.list() }));
-  ipcMain.handle("history:read", (_e, id) => history.read(id));
+  // which: "raw" -> el .crudo.md; vacío -> el principal.
+  ipcMain.handle("history:read", (_e, id, which) => history.read(id, which === "raw" ? "raw" : ""));
   ipcMain.handle("history:remove", (_e, id, alsoFile) => history.remove(id, !!alsoFile));
 
   // Abre el .md (o su carpeta) con la app por defecto del sistema.
-  ipcMain.handle("history:open", async (_e, id) => {
+  ipcMain.handle("history:open", async (_e, id, which) => {
     const entry = history.list().find((x) => x.id === id);
-    if (!entry) return { ok: false, error: "Entrada no encontrada." };
-    if (entry.missing) return { ok: false, error: `El archivo ya no está en ${entry.path}` };
-    const err = await shell.openPath(entry.path);
+    if (!entry) return { ok: false, error: t("Entrada no encontrada.") };
+    const file = history.pathFor(entry, which === "raw" ? "raw" : "");
+    if (!file) return { ok: false, error: t("Esta transcripción no tiene versión cruda guardada.") };
+    if (!fs.existsSync(file)) return { ok: false, error: t("El archivo ya no está en {path}", { path: file }) };
+    const err = await shell.openPath(file);
     return err ? { ok: false, error: err } : { ok: true };
   });
 
   ipcMain.handle("history:reveal", (_e, id) => {
     const entry = history.list().find((x) => x.id === id);
-    if (!entry) return { ok: false, error: "Entrada no encontrada." };
+    if (!entry) return { ok: false, error: t("Entrada no encontrada.") };
     shell.showItemInFolder(entry.path);
     return { ok: true };
   });
@@ -325,7 +393,7 @@ function registerIpc() {
     try {
       fs.mkdirSync(folder, { recursive: true }); // puede no existir si nunca guardaste
     } catch (e) {
-      return { ok: false, error: `No se pudo abrir la carpeta: ${e.message}` };
+      return { ok: false, error: t("No se pudo abrir la carpeta: {msg}", { msg: e.message }) };
     }
     const err = await shell.openPath(folder);
     return err ? { ok: false, error: err } : { ok: true, folder };
@@ -338,7 +406,7 @@ function registerIpc() {
     hotkeys.disable();
     try {
       const res = await dialog.showOpenDialog(win, {
-        title: "Elegí dónde guardar las transcripciones (.md)",
+        title: t("Elegí dónde guardar las transcripciones (.md)"),
         properties: ["openDirectory", "createDirectory"],
         defaultPath: settings.load().historyFolder || history.defaultFolder(),
       });
@@ -355,6 +423,8 @@ function registerIpc() {
   // ---- Atajos ----
   ipcMain.handle("shortcut:register", () => hotkeys.register(settings.load()));
   ipcMain.handle("shortcut:capture", () => hotkeys.capture());
+  // Estado del hook (ok/error): el renderer lo pide al arrancar y tras guardar.
+  ipcMain.handle("shortcut:status", () => hotkeys.getStatus());
 
   // ---- Modo prueba: dispara la acción con texto fijo, sin gastar API ----
   // Da 1.5 s para que pongas el foco en tu app destino (Notepad/Word/VDI).

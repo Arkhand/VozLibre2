@@ -25,9 +25,11 @@ Usa **Whisper large-v3** a través de [Groq](https://groq.com), que es rapidísi
 
 1. Descargá `VozLibre2-1.0.0-portable.exe` desde [Releases](https://github.com/Arkhand/VozLibre2/releases/latest).
 2. Ejecutalo. **No requiere instalación**: es portable, lo podés dejar donde quieras.
-3. Abrí la configuración con ⚙ y pegá tu API key de Groq (abajo te explico cómo sacarla).
+3. La primera vez se abre sola la configuración: pegá tu API key de Groq (abajo te explico cómo sacarla), tocá **🔗 Probar** para verificarla y **Guardar**.
 
 > Windows puede mostrar un aviso de SmartScreen porque el .exe no está firmado. **Más información → Ejecutar de todas formas**.
+>
+> **¿Por qué pide tanto?** La app escucha el teclado a nivel global para detectar el atajo de dictado (push-to-talk) desde cualquier ventana, y simula pulsaciones para escribir el texto en la app activa. Eso es lo que hace que funcione en Word, el navegador o un VDI sin integrarse con cada uno. No registra lo que tipeás: solo mira si la tecla del atajo está presionada.
 
 ### Cómo obtener la API key de Groq (es gratis)
 
@@ -37,7 +39,7 @@ Usa **Whisper large-v3** a través de [Groq](https://groq.com), que es rapidísi
 4. Copiá la clave que aparece — empieza con `gsk_`. **Solo se muestra una vez**, así que copiala en ese momento.
 5. En VozLibre2, abrí ⚙ y pegala en el campo **API key de Groq**. Clic en **Guardar**.
 
-La clave se guarda en tu PC (`%APPDATA%\VozLibre2\settings.json`) y no viaja a ningún lado salvo a la propia API de Groq.
+La clave se guarda en tu PC (`%APPDATA%\VozLibre2\settings.json`), **cifrada** con el almacén de Windows (DPAPI: solo tu usuario en tu máquina puede leerla), y no viaja a ningún lado salvo a la propia API de Groq.
 
 ## Uso básico: dictar
 
@@ -104,7 +106,7 @@ Así sabés quién habló sin necesidad de diarización: la etiqueta sale de **q
 
 Funciona con cualquier app (Teams, Zoom, Meet, lo que sea) porque captura el audio a nivel del sistema, y anda con auriculares o con la PC en silencio. Windows va a pedirte compartir una pantalla: **solo se usa el audio, no se graba la imagen**.
 
-Se transcribe por partes **mientras grabás**, así que al cortar el texto ya está casi listo. Si usás parlantes abiertos, el eco de tu micrófono se detecta y descarta.
+Se transcribe por partes **mientras grabás**, así que al cortar el texto ya está casi listo. Cada trozo se corta esperando un silencio (nadie hablando) para no partir una frase por la mitad, y cada frase lleva su marca de tiempo real, así las dos pistas se intercalan en el orden en que se habló. Si usás parlantes abiertos, el eco de tu micrófono se detecta y descarta.
 
 ### 🕘 Historial
 
@@ -112,7 +114,7 @@ Se transcribe por partes **mientras grabás**, así que al cortar el texto ya es
 <img src="docs/img/03-historial.png" width="420" alt="Historial de transcripciones">
 </div>
 
-Cada archivo transcripto se guarda como un `.md` en `Documentos\VozLibre` (carpeta configurable). Desde el historial abrís el archivo, su carpeta, o lo borrás — el borrado va a la **Papelera de reciclaje**, no se pierde.
+Cada archivo transcripto (y cada reunión) se guarda como un `.md` en `Documentos\VozLibre` (carpeta configurable). Si el texto pasó por el formateo con Claude, al lado queda también el **crudo** en un `.crudo.md`, tal cual lo devolvió Whisper. Desde el historial abrís el formateado (📄), el crudo (📝), la carpeta (📂), o lo borrás — el borrado manda los dos a la **Papelera de reciclaje**, no se pierde.
 
 El dictado con atajo no se guarda: es de usar y tirar.
 
@@ -135,11 +137,14 @@ En audios largos partidos en tramos puede agregar encabezados con marca de tiemp
 | **API key de Groq** | Tu clave `gsk_…` |
 | **Micrófono** | Cuál usar para dictar |
 | **Idioma del audio** | Dejalo en **automático** salvo que sepas lo que hacés (ver abajo) |
+| **Modelo de transcripción** | `whisper-large-v3-turbo` (rápido, recomendado) o `whisper-large-v3` (algo más preciso). Traducir usa siempre large-v3 |
 | **Formato Markdown** | Párrafos y puntuación vía Claude CLI |
 | **Micrófono para reuniones** | Puede ser distinto al del dictado (típicamente los auriculares) |
 | **Confirmar antes de grabar** | Evita arrancar una reunión sin querer |
-| **Guardar historial** | Un `.md` por archivo transcripto, y en qué carpeta |
+| **Guardar historial** | Un `.md` por archivo o reunión (más el `.crudo.md` si se formateó), y en qué carpeta |
 | **Al reconocer el texto** | Mostrar / pegar / teclear |
+| **Iniciar con Windows** | Arranca oculta en la bandeja al iniciar sesión |
+| **Buscar actualizaciones / Logs** | Consulta la última versión en GitHub; abre la carpeta de logs para pedir ayuda |
 | **Partes de los audios largos** | Duración de cada trozo (10 min es lo recomendado) |
 | **Atajos** | Se asignan presionando la combinación |
 
@@ -157,22 +162,40 @@ En audios largos partidos en tramos puede agregar encabezados con marca de tiemp
 
 **¿Puedo moverla?** Sí, arrastrándola de la barra. Y se puede redimensionar.
 
+**¿Necesito ffmpeg?** Solo para videos y audios de más de 25 MB. Si falta, la app avisa al arrancar y ofrece instalarlo con un clic (winget). El dictado, las notas de voz y las reuniones andan sin él.
+
+**¿Necesito Claude Code?** No. Es opcional: sirve para que las reuniones y los archivos se guarden con párrafos y puntuación en vez de texto corrido. Sin él, todo lo demás funciona igual; la app lo avisa la primera vez.
+
+**Algo no anda, ¿qué te mando?** Abrí ⚙ → **📂 Logs** y adjuntá `vozlibre.log` (está en `%APPDATA%\VozLibre2\logs`). Ahí queda cada error con su hora, sin tu API key.
+
+**¿Cómo me entero de versiones nuevas?** La app consulta las [releases de GitHub](https://github.com/Arkhand/VozLibre2/releases) al arrancar y avisa si hay una más nueva (no descarga nada sola). También desde ⚙ → **🔄 Buscar actualizaciones**.
+
 ## Desarrollo
 
 ```bash
 npm install
 npm start          # correr en modo dev
-npm run dist       # generar el .exe portable en dist/
+npm test           # suite de tests (node:test)
+npm run dist       # sube el patch de versión y genera el .exe portable en dist/
 ```
 
-**Stack**: Electron 26, `uiohook-napi` para los atajos globales (keycodes físicos, con keyup real para el push-to-talk), `@nut-tree-fork/nut-js` para simular teclado.
+**Publicar una versión**: `npm run dist` incrementa solo la versión de `package.json` (1.0.0 → 1.0.1) antes de compilar, así cada .exe sale con un número distinto. Después, creá una release en GitHub con el tag `v1.0.1` y adjuntá el `.exe`: el chequeo de actualizaciones de la app compara contra ese tag. `npm run dist:same-version` compila sin tocar la versión.
+
+**Idioma de la interfaz**: los textos están preparados para traducirse (`src/i18n/`). Por ahora solo hay español; para agregar un idioma, `npm run i18n:extract` lista todas las frases y `src/i18n/es.js` explica el formato.
+
+**Stack**: Electron 26, `uiohook-napi` para los atajos globales (keycodes físicos, con keyup real para el push-to-talk), `@nut-tree-fork/nut-js` para el Ctrl+V, `koffi` para teclear Unicode llamando a `SendInput` de Win32 directo (sin PowerShell de por medio).
+
+**Tests**: `npm test` corre la suite con `node:test` (sin dependencias): filtro de alucinaciones, cortes por silencio, intercalado de reuniones y formateo.
 
 **Estructura**:
 
 ```
 main.js              orquestador del proceso principal
 src/main/            window, hotkeys, typing, settings, ipc,
-                     audio (ffmpeg), format (Claude CLI), history, tray
+                     audio (ffmpeg), format (Claude CLI), history, tray,
+                     log (archivo), update (GitHub releases), autostart
+src/i18n/            i18n.js (t(), estilo gettext) + diccionarios por idioma
+test/                suite con node:test
 src/renderer/        UI, grabación, llamada a Groq, reuniones
 ```
 

@@ -1,15 +1,20 @@
 {
   "name": "vozlibre2",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Píldora flotante de transcripción de voz (Groq Whisper) para Windows: ventana frameless, transparente y always-on-top que se expande al transcribir.",
   "author": "Daniel Musial",
   "license": "MIT",
+  "repository": "github:Arkhand/VozLibre2",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "icon": "node assets/make-icon.js",
-    "dist": "electron-builder --win portable"
+    "dist": "npm version patch --no-git-tag-version && electron-builder --win portable",
+    "dist:same-version": "electron-builder --win portable",
+    "release": "node scripts/release.js",
+    "test": "node --test",
+    "i18n:extract": "node scripts/i18n-extract.js"
   },
   "devDependencies": {
     "electron": "^26.6.10",
@@ -17,6 +22,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "koffi": "^2.13.0",
     "uiohook-napi": "^1.5.5"
   },
   "build": {
@@ -26,14 +32,12 @@
     "files": [
       "main.js",
       "src/**/*",
-      "!src/**/*.ps1",
-      "assets/icon.ico"
+      "assets/icon.ico",
+      "!node_modules/koffi/build/koffi/{darwin,freebsd,linux,musl,openbsd}*/**",
+      "!node_modules/koffi/build/koffi/win32_{arm64,ia32}/**"
     ],
-    "extraResources": [
-      {
-        "from": "src/type-unicode.ps1",
-        "to": "type-unicode.ps1"
-      }
+    "asarUnpack": [
+      "node_modules/koffi/**"
     ],
     "win": {
       "target": "portable"

@@ -6,9 +6,13 @@
  * Se expone como window.VLUI (sin require, por contextIsolation).
  */
 (function () {
+  const t = window.VLI18n.t;
   // ----- DOM -----
   const $ = (id) => document.getElementById(id);
   const el = {
+    // Avisos de arranque (en cola)
+    noticePanel: $("noticePanel"), noticeTitle: $("noticeTitle"), noticeText: $("noticeText"),
+    noticeBtns: $("noticeBtns"), noticeClose: $("noticeClose"),
     pill: $("pill"), recBtn: $("recBtn"), configBtn: $("configBtn"), closeBtn: $("closeBtn"),
     fileBtn: $("fileBtn"), historyBtn: $("historyBtn"), meetBtn: $("meetBtn"),
     // Reunión en curso
@@ -34,13 +38,19 @@
     result: $("result"), copyBtn: $("copyBtn"), clearBtn: $("clearBtn"), err: $("err"),
     // Config
     cfgApiKey: $("cfgApiKey"), cfgMic: $("cfgMic"), cfgLang: $("cfgLang"), cfgAction: $("cfgAction"),
-    cfgChunk: $("cfgChunk"),
+    cfgModel: $("cfgModel"), cfgChunk: $("cfgChunk"),
     cfgFormat: $("cfgFormat"), cfgFormatHint: $("cfgFormatHint"), cfgTimestamps: $("cfgTimestamps"),
     cfgSaveHistory: $("cfgSaveHistory"), cfgFolder: $("cfgFolder"), cfgFolderBtn: $("cfgFolderBtn"),
     cfgMeetMic: $("cfgMeetMic"), cfgMeetOut: $("cfgMeetOut"), cfgMeetConfirm: $("cfgMeetConfirm"),
     cfgShortcut: $("cfgShortcut"), cfgShortcutTranslate: $("cfgShortcutTranslate"),
+    cfgHotkeysWarn: $("cfgHotkeysWarn"),
     cfgSave: $("cfgSave"), cfgSaved: $("cfgSaved"), cfgTest: $("cfgTest"),
     configPanel: $("configPanel"),
+    // Onboarding, probar key, sistema
+    cfgWelcome: $("cfgWelcome"), cfgTestKey: $("cfgTestKey"), cfgKeyHint: $("cfgKeyHint"),
+    cfgAutostart: $("cfgAutostart"), cfgAutostartHint: $("cfgAutostartHint"),
+    cfgVersion: $("cfgVersion"), cfgUpdateBtn: $("cfgUpdateBtn"), cfgUpdateHint: $("cfgUpdateHint"),
+    cfgLogsBtn: $("cfgLogsBtn"),
     // Confirmación "salir sin guardar"
     cfgConfirm: $("cfgConfirm"), cfgConfirmCancel: $("cfgConfirmCancel"),
     cfgConfirmDiscard: $("cfgConfirmDiscard"),
@@ -70,7 +80,8 @@
     // Historial
     onHistoryList: async () => ({ ok: true, entries: [] }),
     onHistoryOpenEntry: () => {},   // (id) cargar el texto en el panel de resultado
-    onHistoryOpenFile: () => {},    // (id) abrir el .md con la app del sistema
+    onHistoryOpenFile: () => {},    // (id, which) abrir el .md (which="raw": el crudo) con la app del sistema
+    onListModels: () => [],         // -> [{id, label}] modelos de transcripción
     onHistoryReveal: () => {},      // (id) mostrar en el explorador
     onHistoryRemove: () => {},      // (id, borrarArchivo) sacar del índice; con true manda el .md a la Papelera
     onGetMeetingOutput: async () => "",  // nombre de la salida por defecto de Windows
@@ -83,6 +94,12 @@
     // Reuniones
     onMeetStart: () => {},
     onMeetStop: () => {},
+    // Sistema (config)
+    onAppInfo: async () => ({ version: "", packaged: false, autostart: { supported: false } }),
+    onOpenExternal: () => {},        // (url) abrir en el navegador (hosts permitidos)
+    onOpenLogs: () => {},            // abrir la carpeta de logs
+    onCheckUpdate: async () => ({ ok: false }),
+    onTestConnection: async () => ({ ok: false }),  // (key) llamada mínima a Groq
   };
   function configure(callbacks) { cb = { ...cb, ...callbacks }; }
 
@@ -119,7 +136,11 @@
   function setStatus(msg) { el.status.textContent = msg || ""; refreshLayout(); }
   function setError(msg) {
     el.err.textContent = msg || "";
-    if (msg) el.pill.classList.add("has-result");
+    if (msg) {
+      el.pill.classList.add("has-result");
+      // Todo lo que el usuario ve como error queda en el log del main.
+      window.pill?.log("error", msg);
+    }
     refreshLayout();
   }
   function setResult(text) {
@@ -129,7 +150,7 @@
       el.copyBtn.disabled = false; el.clearBtn.disabled = false;
       el.pill.classList.add("has-result");
     } else {
-      el.result.textContent = "El texto transcripto aparecerá acá…";
+      el.result.textContent = t("El texto transcripto aparecerá acá…");
       el.result.classList.add("empty");
       el.copyBtn.disabled = true; el.clearBtn.disabled = true;
       el.err.textContent = "";
@@ -141,14 +162,15 @@
 
   // Ruta donde quedó el .md guardado. Se muestra bajo el resultado para que sepas
   // dónde buscarlo sin abrir el historial.
-  function setSavedPath(p) {
+  function setSavedPath(p, rawPath = "") {
     if (!p) {
       el.savedPath.hidden = true;
       el.savedPath.textContent = "";
     } else {
       el.savedPath.hidden = false;
-      el.savedPath.textContent = "💾 " + p;
-      el.savedPath.title = p;
+      // Con crudo guardado al lado se avisa, sin repetir toda la ruta.
+      el.savedPath.textContent = "💾 " + p + (rawPath ? "  " + t("(+ crudo)") : "");
+      el.savedPath.title = rawPath ? `${p}\n${rawPath}` : p;
     }
     refreshLayout();
   }
@@ -181,21 +203,21 @@
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     const sec = s % 60;
-    if (h > 0) return `${h} h ${String(m).padStart(2, "0")} min`;
-    if (m > 0) return `${m} min ${String(sec).padStart(2, "0")} s`;
-    return `${sec} s`;
+    if (h > 0) return t("{h} h {m} min", { h, m: String(m).padStart(2, "0") });
+    if (m > 0) return t("{m} min {s} s", { m, s: String(sec).padStart(2, "0") });
+    return t("{s} s", { s: sec });
   }
 
   // Muestra el cuadro y resuelve true/false según lo que elija el usuario.
   function askFileConfirm(plan) {
-    el.fcTitle.textContent = plan.isVideo ? "🎬 Video largo" : "🎧 Audio largo";
+    el.fcTitle.textContent = plan.isVideo ? t("🎬 Video largo") : t("🎧 Audio largo");
     const partes = plan.parts > 1
-      ? ` Se va a cortar en ${plan.parts} partes (en silencios) y se transcribe cada una.`
+      ? " " + t("Se va a cortar en {n} partes (en silencios) y se transcribe cada una.", { n: plan.parts })
       : "";
-    const extrae = plan.isVideo ? " Se le extrae el audio y se comprime." : " Se comprime a Opus.";
+    const extrae = " " + (plan.isVideo ? t("Se le extrae el audio y se comprime.") : t("Se comprime a Opus."));
     el.fcDetail.textContent =
       `${plan.name} — ${fmtDuration(plan.duration)}, ${plan.sizeMB.toFixed(1)} MB.` +
-      extrae + partes + " Esto consume API.";
+      extrae + partes + " " + t("Esto consume API.");
 
     el.fileConfirm.hidden = false;
     el.pill.classList.add("file-confirming");
@@ -233,9 +255,9 @@
   let meetConfirmResolve = null;
 
   function askMeetConfirm(dev) {
-    el.mcOut.textContent = dev?.salida || "(no se pudo determinar)";
+    el.mcOut.textContent = dev?.salida || t("(no se pudo determinar)");
     el.mcOut.title = dev?.salida || "";
-    el.mcMic.textContent = dev?.mic || "(sin micrófono)";
+    el.mcMic.textContent = dev?.mic || t("(sin micrófono)");
     el.mcMic.title = dev?.mic || "";
     el.meetConfirm.hidden = false;
     el.pill.classList.add("meet-confirming");
@@ -309,7 +331,7 @@
     meetingOn = !!on;
     el.pill.classList.toggle("meeting-on", meetingOn);
     el.meetBtn.classList.toggle("recording", meetingOn);
-    el.meetBtn.title = meetingOn ? "Grabando… clic para detener" : "Grabar una reunión (Teams, Zoom, Meet…)";
+    el.meetBtn.title = meetingOn ? t("Grabando… clic para detener") : t("Grabar una reunión (Teams, Zoom, Meet…)");
     if (meetingOn) {
       el.meetTimer.textContent = "00:00";
       setMeetingLevels(0, 0);
@@ -318,12 +340,12 @@
       // Se deja a la vista de qué dispositivo se está grabando: si es el
       // equivocado, mejor enterarse en el minuto 1 que en el 40.
       el.meetNote.textContent = info.hasMic === false
-        ? "⚠️ Sin micrófono: se graba solo el audio de la reunión, no tu voz."
+        ? t("⚠️ Sin micrófono: se graba solo el audio de la reunión, no tu voz.")
         : info.salida
-          ? `🔊 Grabando de: ${info.salida}`
-          : "Se transcribe por partes mientras grabás.";
+          ? t("🔊 Grabando de: {device}", { device: info.salida })
+          : t("Se transcribe por partes mientras grabás.");
       el.meetNote.title = info.salida || "";
-      el.meetState.textContent = "Grabando reunión";
+      el.meetState.textContent = t("Grabando reunión");
     }
     refreshLayout();
   }
@@ -359,7 +381,7 @@
       const hoy = new Date();
       const mismaFecha = d.toDateString() === hoy.toDateString();
       const hora = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-      if (mismaFecha) return `hoy ${hora}`;
+      if (mismaFecha) return t("hoy {time}", { time: hora });
       return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${hora}`;
     } catch { return ""; }
   }
@@ -373,14 +395,14 @@
   function renderHistory(todas) {
     const entries = (todas || []).slice(0, HIST_MAX);
     el.histHint.textContent = todas.length > HIST_MAX
-      ? `Se muestran las últimas ${HIST_MAX} de ${todas.length}. Los .md quedan todos en la carpeta.`
-      : "Los .md quedan en la carpeta que elegiste en ⚙.";
+      ? t("Se muestran las últimas {shown} de {total}. Los .md quedan todos en la carpeta.", { shown: HIST_MAX, total: todas.length })
+      : t("Los .md quedan en la carpeta que elegiste en ⚙.");
 
     el.histList.textContent = "";
     if (!entries.length) {
       const empty = document.createElement("p");
       empty.className = "hist-empty";
-      empty.textContent = "Todavía no transcribiste ningún archivo.";
+      empty.textContent = t("Todavía no transcribiste ningún archivo.");
       el.histList.appendChild(empty);
       return;
     }
@@ -391,19 +413,19 @@
 
       const main = document.createElement("button");
       main.className = "hist-main";
-      main.title = e.missing ? `Falta el archivo: ${e.path}` : "Ver el texto acá";
+      main.title = e.missing ? t("Falta el archivo: {path}", { path: e.path }) : t("Ver el texto acá");
       main.disabled = !!e.missing;
 
       const title = document.createElement("span");
       title.className = "hist-name";
-      title.textContent = (e.missing ? "⚠️ " : "") + (e.title || "(sin título)");
+      title.textContent = (e.missing ? "⚠️ " : "") + (e.title || t("(sin título)"));
 
       const meta = document.createElement("span");
       meta.className = "hist-meta";
       const bits = [fmtDate(e.savedAt)];
       if (e.duration) bits.push(fmtDuration(e.duration));
       if (e.language) bits.push(e.language.toUpperCase());
-      if (!e.formatted) bits.push("sin formato");
+      if (!e.formatted) bits.push(t("sin formato"));
       meta.textContent = bits.filter(Boolean).join(" · ");
 
       main.append(title, meta);
@@ -412,24 +434,33 @@
       const openBtn = document.createElement("button");
       openBtn.className = "hist-act";
       openBtn.textContent = "📄";
-      openBtn.title = "Abrir el .md";
+      openBtn.title = e.hasRaw ? t("Abrir el .md formateado") : t("Abrir el .md");
       openBtn.disabled = !!e.missing;
-      openBtn.addEventListener("click", () => cb.onHistoryOpenFile(e.id));
+      openBtn.addEventListener("click", () => cb.onHistoryOpenFile(e.id, ""));
+
+      // El crudo (texto tal cual salió de Whisper) solo existe cuando el principal
+      // fue formateado; si no, el principal YA es el crudo y no hay botón.
+      const rawBtn = document.createElement("button");
+      rawBtn.className = "hist-act";
+      rawBtn.textContent = "📝";
+      rawBtn.title = t("Abrir el crudo (sin formatear)");
+      rawBtn.hidden = !e.hasRaw;
+      rawBtn.addEventListener("click", () => cb.onHistoryOpenFile(e.id, "raw"));
 
       const revealBtn = document.createElement("button");
       revealBtn.className = "hist-act";
       revealBtn.textContent = "📂";
-      revealBtn.title = "Mostrar en la carpeta";
+      revealBtn.title = t("Mostrar en la carpeta");
       revealBtn.disabled = !!e.missing;
       revealBtn.addEventListener("click", () => cb.onHistoryReveal(e.id));
 
       const delBtn = document.createElement("button");
       delBtn.className = "hist-act";
       delBtn.textContent = "✕";
-      delBtn.title = "Borrar (el .md va a la Papelera)";
+      delBtn.title = t("Borrar (el .md va a la Papelera)");
       delBtn.addEventListener("click", () => askDelete(e));
 
-      row.append(main, openBtn, revealBtn, delBtn);
+      row.append(main, openBtn, rawBtn, revealBtn, delBtn);
       el.histList.appendChild(row);
     }
   }
@@ -469,7 +500,7 @@
 
   function askDelete(entry) {
     borrando = entry;
-    el.histConfirmMsg.textContent = `¿Borrar "${entry.title || "esta transcripción"}"?`;
+    el.histConfirmMsg.textContent = t("¿Borrar \"{title}\"?", { title: entry.title || t("esta transcripción") });
     showHistConfirm(true);
   }
 
@@ -478,7 +509,7 @@
     showHistConfirm(false);
     if (!e) return;
     const r = await cb.onHistoryRemove(e.id, true /* borrar también el archivo */);
-    if (r && r.ok === false) setError(r.error || "No se pudo borrar el archivo.");
+    if (r && r.ok === false) setError(r.error || t("No se pudo borrar el archivo."));
     await openHistory(true); // refrescar la lista
   }
 
@@ -508,18 +539,33 @@
     if (b.shift) mods.push("Shift");
     if (b.alt) mods.push("Alt");
     if (b.meta) mods.push("Win");
-    return [...mods, KEYNAMES[b.keycode] || `Tecla ${b.keycode}`].join("+");
+    return [...mods, KEYNAMES[b.keycode] || t("Tecla {n}", { n: b.keycode })].join("+");
   }
 
   async function loadConfigIntoUI(settings) {
     el.cfgApiKey.value = settings.groqApiKey || "";
     el.cfgLang.value = settings.lang ?? "es";
     el.cfgAction.value = settings.action || "show";
+    await populateModels(settings.model);
     el.cfgChunk.value = String(settings.chunkMinutes ?? 10);
     bindTranscribe = (settings.shortcut && typeof settings.shortcut === "object") ? settings.shortcut : null;
     bindTranslate = (settings.shortcutTranslate && typeof settings.shortcutTranslate === "object") ? settings.shortcutTranslate : null;
-    el.cfgShortcut.value = bindLabel(bindTranscribe) || "(sin asignar — hacé clic)";
-    el.cfgShortcutTranslate.value = bindLabel(bindTranslate) || "(sin asignar — hacé clic)";
+    el.cfgShortcut.value = bindLabel(bindTranscribe) || t("(sin asignar — hacé clic)");
+    el.cfgShortcutTranslate.value = bindLabel(bindTranslate) || t("(sin asignar — hacé clic)");
+
+    // Sistema: iniciar con Windows (solo empaquetada), versión.
+    el.cfgAutostart.checked = !!settings.startWithWindows;
+    el.cfgUpdateHint.textContent = "";
+    el.cfgKeyHint.classList.remove("ok", "warn");
+    try {
+      const info = await cb.onAppInfo();
+      el.cfgVersion.textContent = `VozLibre ${info?.version || ""}`.trim();
+      const supported = !!info?.autostart?.supported;
+      el.cfgAutostart.disabled = !supported;
+      if (!supported) {
+        el.cfgAutostartHint.textContent = t("Disponible solo en la versión empaquetada (.exe).");
+      }
+    } catch { /* sin info: la versión queda vacía */ }
 
     // Formateo: el check se deshabilita si no hay CLI, y el hint explica por qué
     // (si no, queda un check muerto sin explicación).
@@ -567,12 +613,12 @@
     if (!ok) {
       el.cfgFormat.checked = false;
       el.cfgFormatHint.textContent =
-        (st?.hint || "Claude Code no está instalado.") +
-        " Sin esto la transcripción se guarda sin formato.";
+        (st?.hint || t("Claude Code no está instalado.")) + " " +
+        t("Sin esto la transcripción se guarda sin formato.");
       el.cfgFormatHint.classList.add("warn");
     } else {
       el.cfgFormatHint.textContent =
-        "Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.";
+        t("Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.");
       el.cfgFormatHint.classList.remove("warn");
     }
   }
@@ -582,6 +628,22 @@
     const on = el.cfgSaveHistory.checked;
     el.cfgFolder.disabled = !on;
     el.cfgFolderBtn.disabled = !on;
+  }
+
+  // Llena el selector de modelo con la lista que manda el main (única fuente de
+  // verdad: así la UI no puede ofrecer un modelo que la API no acepta).
+  async function populateModels(current) {
+    let models = [];
+    try { models = (await cb.onListModels()) || []; } catch { /* sin lista: queda vacío */ }
+    el.cfgModel.textContent = "";
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      el.cfgModel.appendChild(opt);
+    }
+    if (models.some((m) => m.id === current)) el.cfgModel.value = current;
+    else if (models.length) el.cfgModel.value = models[0].id;
   }
 
   // Llena los dos selectores de micrófono: el del dictado y el de reuniones.
@@ -600,13 +662,13 @@
         mics.forEach((d, i) => {
           const opt = document.createElement("option");
           opt.value = d.deviceId;
-          opt.textContent = d.label || `Micrófono ${i + 1}`;
+          opt.textContent = d.label || t("Micrófono {n}", { n: i + 1 });
           select.appendChild(opt);
         });
       };
 
-      llenar(el.cfgMic, "Por defecto del sistema");
-      llenar(el.cfgMeetMic, "El mismo del dictado");
+      llenar(el.cfgMic, t("Por defecto del sistema"));
+      llenar(el.cfgMeetMic, t("El mismo del dictado"));
     } catch { /* si falla, quedan solo las opciones vacías */ }
   }
 
@@ -617,6 +679,7 @@
       lang: el.cfgLang.value,
       deviceId: el.cfgMic.value,
       action: el.cfgAction.value,
+      model: el.cfgModel.value,
       chunkMinutes: Number(el.cfgChunk.value) || 10,
       shortcut: bindTranscribe,
       shortcutTranslate: bindTranslate,
@@ -626,10 +689,11 @@
       historyFolder,
       meetingMicId: el.cfgMeetMic.value,
       meetingConfirm: el.cfgMeetConfirm.checked,
+      startWithWindows: el.cfgAutostart.checked,
     };
   }
   function flashSaved() {
-    el.cfgSaved.textContent = "✓ Guardado";
+    el.cfgSaved.textContent = t("✓ Guardado");
     el.cfgSaved.classList.add("show");
     setTimeout(() => el.cfgSaved.classList.remove("show"), 1600);
   }
@@ -637,10 +701,10 @@
   // Captura de atajo vía uiohook (clic en el input -> el main "aprende" la tecla).
   function attachShortcutCapture(input, setBind) {
     input.addEventListener("click", async () => {
-      input.value = "Presioná la combinación…";
+      input.value = t("Presioná la combinación…");
       const r = await window.pill.captureShortcut();
       if (r && r.ok && r.bind) { setBind(r.bind); input.value = bindLabel(r.bind); }
-      else input.value = bindLabel(input === el.cfgShortcut ? bindTranscribe : bindTranslate) || "(sin asignar — hacé clic)";
+      else input.value = bindLabel(input === el.cfgShortcut ? bindTranscribe : bindTranslate) || t("(sin asignar — hacé clic)");
     });
   }
 
@@ -663,9 +727,21 @@
     configOpen = false;
     dirty = false;
     showConfirm(false);
+    el.cfgWelcome.hidden = true;
     el.pill.classList.remove("config-open");
     el.configBtn.classList.remove("active");
     cb.onConfigOpen(false);  // el orquestador: foco + atajos
+    refreshLayout();
+    pumpNotices();           // los avisos esperaron a que se cerrara la config
+  }
+
+  // Primer arranque sin API key: abrir la config con la bienvenida arriba. Es el
+  // único paso obligatorio, así que no se deja al usuario descubriendo el ⚙.
+  function openOnboarding() {
+    if (!configOpen) openConfig();
+    el.cfgWelcome.hidden = false;
+    el.cfgScroll.scrollTop = 0;
+    el.cfgApiKey.focus();
     refreshLayout();
   }
 
@@ -701,9 +777,122 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Avisos de arranque (cola)
+  // ---------------------------------------------------------------------------
+  // {title, text, buttons:[{label, primary, onClick, keep}], onClose}
+  //   - keep: el botón NO cierra el aviso (p.ej. "Instalar": después se comprueba).
+  //   - onClose: se llama al cerrar por cualquier vía (botón o ✕).
+  // Se muestran de a uno. Con la config abierta esperan a que se cierre.
+  const noticeQueue = [];
+  let noticeCurrent = null;
+
+  function showNotice(n) {
+    noticeQueue.push(n);
+    pumpNotices();
+  }
+
+  function pumpNotices() {
+    if (noticeCurrent || configOpen || !noticeQueue.length) return;
+    const n = noticeQueue.shift();
+    noticeCurrent = n;
+    el.noticeTitle.textContent = n.title || "";
+    el.noticeText.textContent = n.text || "";
+    el.noticeBtns.textContent = "";
+    for (const b of n.buttons || []) {
+      const btn = document.createElement("button");
+      btn.className = "sec" + (b.primary ? " primary" : "");
+      btn.textContent = b.label;
+      btn.addEventListener("click", async () => {
+        try { if (b.onClick) await b.onClick(); }
+        catch (e) { setError(e?.message || String(e)); }
+        if (!b.keep) closeNotice();
+      });
+      el.noticeBtns.appendChild(btn);
+    }
+    el.pill.classList.add("noticing");
+    refreshLayout();
+  }
+
+  function closeNotice() {
+    const n = noticeCurrent;
+    noticeCurrent = null;
+    el.pill.classList.remove("noticing");
+    refreshLayout();
+    if (n?.onClose) { try { n.onClose(); } catch { /* nada */ } }
+    pumpNotices();
+  }
+
+  // Estado del hook de teclado: si falló, la config lo explica junto a los atajos.
+  function setHotkeysStatus(hk) {
+    const bad = hk && !hk.ok;
+    el.cfgHotkeysWarn.hidden = !bad;
+    el.cfgHotkeysWarn.textContent = bad
+      ? t("⚠️ Los atajos globales no están activos: {error}. Podés grabar manteniendo presionado el orbe 🔘.", { error: hk.error || "" })
+      : "";
+  }
+
+  // "Probar conexión": llamada mínima a Groq con la key del campo (sin guardar).
+  async function testConnection() {
+    const key = el.cfgApiKey.value.trim();
+    el.cfgTestKey.disabled = true;
+    el.cfgKeyHint.classList.remove("ok", "warn");
+    el.cfgKeyHint.textContent = t("Probando…");
+    try {
+      const r = await cb.onTestConnection(key);
+      el.cfgKeyHint.textContent = r?.ok
+        ? t("✓ Conexión con Groq OK. Tocá Guardar para dejarla configurada.")
+        : (r?.error || t("No se pudo verificar la key."));
+      el.cfgKeyHint.classList.add(r?.ok ? "ok" : "warn");
+    } finally {
+      el.cfgTestKey.disabled = false;
+      refreshLayout();
+    }
+  }
+
+  // "Buscar actualizaciones" desde la config: el resultado se muestra al lado.
+  async function checkUpdateFromConfig() {
+    el.cfgUpdateBtn.disabled = true;
+    el.cfgUpdateHint.classList.remove("ok", "warn");
+    el.cfgUpdateHint.textContent = t("Consultando GitHub…");
+    try {
+      const u = await cb.onCheckUpdate();
+      if (!u?.ok) {
+        el.cfgUpdateHint.textContent = t("No se pudo consultar ({error}).", { error: u?.error || "?" });
+        el.cfgUpdateHint.classList.add("warn");
+      } else if (u.available) {
+        el.cfgUpdateHint.textContent = "";
+        const a = document.createElement("a");
+        a.href = "#";
+        a.textContent = t("Hay una versión nueva: {latest}. Descargar.", { latest: u.latest });
+        a.addEventListener("click", (e) => { e.preventDefault(); cb.onOpenExternal(u.downloadUrl || u.url); });
+        el.cfgUpdateHint.appendChild(a);
+        el.cfgUpdateHint.classList.add("ok");
+      } else {
+        el.cfgUpdateHint.textContent = u.latest
+          ? t("Estás al día ({version}).", { version: u.current })
+          : t("Todavía no hay versiones publicadas en GitHub.");
+      }
+    } finally {
+      el.cfgUpdateBtn.disabled = false;
+      refreshLayout();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Cableado de eventos del DOM (se llama una vez en init).
   // ---------------------------------------------------------------------------
   function bindEvents() {
+    // Links externos (data-ext): el main los abre en el navegador (hosts permitidos).
+    document.querySelectorAll("a[data-ext]").forEach((a) => {
+      a.addEventListener("click", (e) => { e.preventDefault(); cb.onOpenExternal(a.dataset.ext); });
+    });
+    // Avisos
+    el.noticeClose.addEventListener("click", closeNotice);
+    // Config: probar key, logs, updates
+    el.cfgTestKey.addEventListener("click", testConnection);
+    el.cfgLogsBtn.addEventListener("click", () => cb.onOpenLogs());
+    el.cfgUpdateBtn.addEventListener("click", checkUpdateFromConfig);
+
     // Orbe: mantener presionado para grabar (modo transcribe por defecto).
     el.recBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); cb.onRecordStart("transcribe"); });
     el.recBtn.addEventListener("pointerup", (e) => { e.preventDefault(); cb.onRecordStop(); });
@@ -729,9 +918,9 @@
     el.cfgConfirmDiscard.addEventListener("click", () => closeConfig());     // descartar y cerrar
 
     // Cualquier edición de un campo marca cambios sin guardar.
-    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgChunk,
+    [el.cfgApiKey, el.cfgMic, el.cfgLang, el.cfgAction, el.cfgModel, el.cfgChunk,
      el.cfgFormat, el.cfgTimestamps, el.cfgSaveHistory,
-     el.cfgMeetMic, el.cfgMeetConfirm].forEach((node) => {
+     el.cfgMeetMic, el.cfgMeetConfirm, el.cfgAutostart].forEach((node) => {
       node.addEventListener("input", markDirty);
       node.addEventListener("change", markDirty);
     });
@@ -776,7 +965,7 @@
     el.copyBtn.addEventListener("click", () => {
       cb.onCopy(el.result.textContent);
       const orig = el.copyBtn.textContent;
-      el.copyBtn.textContent = "✅ Copiado";
+      el.copyBtn.textContent = t("✅ Copiado");
       setTimeout(() => { el.copyBtn.textContent = orig; }, 1400);
     });
     el.clearBtn.addEventListener("click", () => { setResult(""); setStatus(""); });
@@ -848,6 +1037,8 @@
     askMeetConfirm, closeMeetConfirm,
     closeConfig, requestCloseConfig, isDirty, clearDirty,
     loadConfigIntoUI, readConfigForm, flashSaved,
+    // Arranque: bienvenida, avisos en cola, estado de los atajos
+    openOnboarding, showNotice, closeNotice, setHotkeysStatus,
     // helper para el test "solo mostrar"
     cfgActionValue: () => el.cfgAction.value,
     setTestBusy: (busy) => { el.cfgTest.disabled = busy; },

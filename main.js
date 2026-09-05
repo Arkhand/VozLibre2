@@ -12,11 +12,14 @@
  */
 
 const { app, BrowserWindow } = require("electron");
+const log = require("./src/main/log");
 const windowMod = require("./src/main/window");
 const tray = require("./src/main/tray");
 const hotkeys = require("./src/main/hotkeys");
 const settings = require("./src/main/settings");
 const format = require("./src/main/format");
+const audio = require("./src/main/audio");
+const autostart = require("./src/main/autostart");
 const { registerIpc } = require("./src/main/ipc");
 
 // Una sola instancia (evita dos píldoras flotando a la vez).
@@ -27,9 +30,15 @@ if (!app.requestSingleInstanceLock()) {
 app.on("second-instance", () => windowMod.reveal());
 
 app.whenReady().then(() => {
+  // Log a archivo desde el primer momento: en el .exe no hay consola.
+  log.init();
+  console.log(`VozLibre ${app.getVersion()} — Electron ${process.versions.electron}, ` +
+    `${process.platform} ${process.arch}, ${app.isPackaged ? "empaquetada" : "dev"}`);
+
   // Primera vez: el formateo a Markdown queda PRENDIDO si Claude Code está
   // instalado, apagado si no. Después manda lo que el usuario haya elegido.
   settings.resolveFormatDefault(format.isAvailable());
+  console.log(`claude CLI: ${format.isAvailable() ? "sí" : "no"} · ffmpeg: ${audio.isAvailable() ? "sí" : "no"}`);
 
   registerIpc();
   windowMod.create();
@@ -38,8 +47,14 @@ app.whenReady().then(() => {
 
   // Los hotkeys necesitan saber cuál es la ventana actual para enviarle los eventos.
   hotkeys.init(() => windowMod.get());
-  // Registrar los atajos guardados al arrancar.
-  hotkeys.register(settings.load());
+  // Registrar los atajos guardados al arrancar. Si el hook no carga, el renderer
+  // lo pregunta (shortcut:status) y lo muestra: un fallo silencioso acá se ve
+  // como "los atajos no andan" sin ninguna pista.
+  const hk = hotkeys.register(settings.load());
+  console.log(`atajos: ${hk.ok ? "ok" : "FALLO: " + hk.error}`);
+
+  // Re-aplicar "iniciar con Windows" con la ruta actual del .exe (por si lo movieron).
+  autostart.apply(settings.load());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) windowMod.create();

@@ -16,6 +16,7 @@
 const { app, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { t } = require("../i18n/i18n");
 
 // Tope de entradas en el índice. Las más viejas se van cayendo: el índice es para
 // "lo que transcribí últimamente", no un archivo histórico (los .md quedan siempre).
@@ -109,7 +110,7 @@ const LANG_NAMES = {
   de: "Alemán", ca: "Catalán", gl: "Gallego", eu: "Euskera", nl: "Neerlandés",
   ja: "Japonés", zh: "Chino", ru: "Ruso", ar: "Árabe",
 };
-function langName(code) { return LANG_NAMES[code] || code || "desconocido"; }
+function langName(code) { return LANG_NAMES[code] ? t(LANG_NAMES[code]) : (code || t("desconocido")); }
 
 /* Arma el .md completo: frontmatter YAML + cuerpo.
  * El frontmatter permite reconstruir el historial leyendo el archivo, aunque se
@@ -127,6 +128,8 @@ function buildMarkdown(meta, body) {
     meta.language ? `idioma: ${meta.language}` : null,
     `formateado: ${meta.formatted ? "true" : "false"}`,
     meta.partial ? "formateo_parcial: true" : null,
+    meta.rawFile ? `crudo: ${meta.rawFile}` : null,
+    meta.formattedFile ? `formateado_en: ${meta.formattedFile}` : null,
   ].filter(Boolean);
   const fm = `---\n${campos.join("\n")}\n---\n\n`;
 
@@ -137,20 +140,35 @@ function buildMarkdown(meta, body) {
     `_\n`;
 
   // Aviso visible cuando el texto NO pasó por el formateador: quien abra el .md
-  // tiene que saber por qué está sin estructura, si no parece un bug.
-  const warn = !meta.formatted
-    ? `\n> ⚠️ Sin formatear: ${meta.formatError || "el formateo automático no estaba disponible"}.\n> El texto está tal cual lo devolvió la transcripción.\n`
+  // tiene que saber por qué está sin estructura, si no parece un bug. El crudo
+  // guardado a propósito (al lado del formateado) no es un problema: se dice
+  // qué es y dónde está el otro.
+  const warn = meta.raw
+    ? "\n> " + t("📝 Texto crudo, tal cual lo devolvió la transcripción. La versión formateada está en `{file}`.", { file: meta.formattedFile }) + "\n"
+    : !meta.formatted
+    ? "\n> " + t("⚠️ Sin formatear: {reason}.", { reason: meta.formatError || t("el formateo automático no estaba disponible") }) +
+      "\n> " + t("El texto está tal cual lo devolvió la transcripción.") + "\n"
     : meta.partial
-      ? `\n> ⚠️ Formateo parcial: ${meta.failedCount} parte(s) quedaron sin formatear.\n`
+      ? "\n> " + t("⚠️ Formateo parcial: {n} parte(s) quedaron sin formatear.", { n: meta.failedCount }) + "\n"
       : "";
 
   return `${fm}${head}${sub}${warn}\n${body.trim()}\n`;
 }
 
+/* Nombre del archivo crudo a partir del formateado: "x.md" -> "x.crudo.md".
+ * Van juntos en la carpeta, uno al lado del otro, para que se encuentren. */
+function rawNameFor(mdPath) {
+  return mdPath.replace(/\.md$/i, "") + ".crudo.md";
+}
+
 /* Guarda la transcripción y la registra en el índice.
- *   opts: { folder, sourceName, sourcePath, duration, language, text,
+ *   opts: { folder, sourceName, sourcePath, duration, language, text, rawText,
  *           formatted, partial, failedCount, formatError }
- * Devuelve { ok, path, entry } | { ok:false, error }. */
+ * Si el texto pasó por el formateador, se guardan DOS archivos: el .md formateado
+ * y, al lado, el .crudo.md con el texto tal cual lo devolvió Whisper. El crudo es
+ * la fuente de verdad: si el formateo se comió algo o cambió una palabra, ahí está
+ * el original para comparar.
+ * Devuelve { ok, path, rawPath, entry } | { ok:false, error }. */
 function save(opts) {
   // Las reuniones van a su propia subcarpeta para no mezclarse con los archivos
   // que el usuario mandó a transcribir.
@@ -158,19 +176,25 @@ function save(opts) {
   try {
     fs.mkdirSync(folder, { recursive: true });
   } catch (e) {
-    return { ok: false, error: `No se pudo crear la carpeta "${folder}": ${e.message}` };
+    return { ok: false, error: t("No se pudo crear la carpeta \"{folder}\": {msg}", { folder, msg: e.message }) };
   }
 
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
-  const title = path.basename(opts.sourceName || "", path.extname(opts.sourceName || "")) || "Transcripción";
+  const title = path.basename(opts.sourceName || "", path.extname(opts.sourceName || "")) || t("Transcripción");
   const filename = `${date}_${safeName(opts.sourceName)}.md`;
   const target = dedupe(folder, filename);
+
+  // El crudo se guarda aparte solo si el texto principal es otro (pasó por el
+  // formateador). Sin formateo el .md principal YA es el crudo.
+  const rawText = (opts.rawText || "").trim();
+  const saveRaw = !!opts.formatted && !!rawText && rawText !== (opts.text || "").trim();
+  const rawTarget = saveRaw ? dedupe(folder, path.basename(rawNameFor(target))) : "";
 
   const meta = {
     kind: opts.kind === "meeting" ? "meeting" : "file",
     title,
-    sourceName: opts.sourceName || "(desconocido)",
+    sourceName: opts.sourceName || t("(desconocido)"),
     date,
     duration: opts.duration,
     language: opts.language,
@@ -178,16 +202,31 @@ function save(opts) {
     partial: !!opts.partial,
     failedCount: opts.failedCount || 0,
     formatError: opts.formatError || "",
+    rawFile: rawTarget ? path.basename(rawTarget) : "",
+  };
+
+  const writeError = (e) => {
+    if (e.code === "EACCES" || e.code === "EPERM") {
+      return { ok: false, error: t("Sin permisos para escribir en \"{folder}\".", { folder }) };
+    }
+    if (e.code === "ENOSPC") return { ok: false, error: t("No queda espacio en el disco.") };
+    return { ok: false, error: t("No se pudo guardar el .md: {msg}", { msg: e.message }) };
   };
 
   try {
     fs.writeFileSync(target, buildMarkdown(meta, opts.text || ""), "utf8");
   } catch (e) {
-    if (e.code === "EACCES" || e.code === "EPERM") {
-      return { ok: false, error: `Sin permisos para escribir en "${folder}".` };
+    return writeError(e);
+  }
+  if (rawTarget) {
+    // El crudo lleva su propio frontmatter (formateado: false) y apunta al
+    // formateado, así cualquiera de los dos lleva al otro.
+    const rawMeta = { ...meta, formatted: false, partial: false, formatError: "", rawFile: "", raw: true, formattedFile: path.basename(target) };
+    try {
+      fs.writeFileSync(rawTarget, buildMarkdown(rawMeta, rawText), "utf8");
+    } catch (e) {
+      return writeError(e);
     }
-    if (e.code === "ENOSPC") return { ok: false, error: "No queda espacio en el disco." };
-    return { ok: false, error: `No se pudo guardar el .md: ${e.message}` };
   }
 
   const entry = {
@@ -196,6 +235,7 @@ function save(opts) {
     title,
     sourceName: meta.sourceName,
     path: target,
+    rawPath: rawTarget || "",
     savedAt: now.toISOString(),
     duration: opts.duration || 0,
     language: opts.language || "",
@@ -205,7 +245,7 @@ function save(opts) {
   };
 
   saveIndex([entry, ...loadIndex()]);
-  return { ok: true, path: target, entry };
+  return { ok: true, path: target, rawPath: rawTarget || "", entry };
 }
 
 /* Lista el historial. Marca `missing` las entradas cuyo .md ya no está en disco
@@ -214,26 +254,36 @@ function list() {
   return loadIndex().map((e) => ({
     ...e,
     missing: !safeExists(e.path),
+    // hasRaw: hay un .crudo.md guardado Y sigue en disco.
+    hasRaw: !!e.rawPath && safeExists(e.rawPath),
   }));
+}
+
+/* Ruta del archivo pedido: "raw" -> el crudo, cualquier otra cosa -> el principal. */
+function pathFor(entry, which) {
+  return which === "raw" ? (entry.rawPath || "") : entry.path;
 }
 
 function safeExists(p) {
   try { return typeof p === "string" && fs.existsSync(p); } catch { return false; }
 }
 
-/* Devuelve el CUERPO del .md (sin frontmatter), para mostrarlo en la píldora. */
-function read(id) {
+/* Devuelve el CUERPO del .md (sin frontmatter), para mostrarlo en la píldora.
+ * which: "raw" lee el .crudo.md; por defecto el principal. */
+function read(id, which = "") {
   const entry = loadIndex().find((e) => e.id === id);
-  if (!entry) return { ok: false, error: "Esa transcripción ya no está en el historial." };
+  if (!entry) return { ok: false, error: t("Esa transcripción ya no está en el historial.") };
+  const file = pathFor(entry, which);
+  if (!file) return { ok: false, error: t("Esta transcripción no tiene versión cruda guardada.") };
   try {
-    const raw = fs.readFileSync(entry.path, "utf8");
+    const raw = fs.readFileSync(file, "utf8");
     const body = raw.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
     return { ok: true, text: body, entry };
   } catch (e) {
     if (e.code === "ENOENT") {
-      return { ok: false, error: `El archivo ya no está en ${entry.path}` };
+      return { ok: false, error: t("El archivo ya no está en {path}", { path: file }) };
     }
-    return { ok: false, error: `No se pudo leer el archivo: ${e.message}` };
+    return { ok: false, error: t("No se pudo leer el archivo: {msg}", { msg: e.message }) };
   }
 }
 
@@ -246,13 +296,17 @@ function read(id) {
 async function remove(id, alsoFile = false) {
   const entries = loadIndex();
   const entry = entries.find((e) => e.id === id);
-  if (!entry) return { ok: false, error: "Entrada no encontrada." };
+  if (!entry) return { ok: false, error: t("Entrada no encontrada.") };
 
-  if (alsoFile && fs.existsSync(entry.path)) {
-    try {
-      await shell.trashItem(entry.path);
-    } catch (e) {
-      return { ok: false, error: `No se pudo mandar el archivo a la Papelera: ${e.message}` };
+  // Van juntos a la Papelera el formateado y, si existe, el crudo.
+  if (alsoFile) {
+    for (const f of [entry.path, entry.rawPath]) {
+      if (!f || !fs.existsSync(f)) continue;
+      try {
+        await shell.trashItem(f);
+      } catch (e) {
+        return { ok: false, error: t("No se pudo mandar el archivo a la Papelera: {msg}", { msg: e.message }) };
+      }
     }
   }
   saveIndex(entries.filter((e) => e.id !== id));
@@ -265,8 +319,8 @@ function clear() {
 }
 
 module.exports = {
-  save, list, read, remove, clear,
-  defaultFolder, folderFor, indexPath, buildMarkdown, MEETINGS_SUBDIR,
+  save, list, read, remove, clear, pathFor,
+  defaultFolder, folderFor, indexPath, buildMarkdown, MEETINGS_SUBDIR, rawNameFor,
   // expuestos para tests
   _safeName: safeName,
   _dedupe: dedupe,

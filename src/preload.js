@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("pill", {
 
   // Settings (persistencia)
   loadSettings: () => ipcRenderer.invoke("settings:load"),
+  // Modelos de transcripción disponibles: [{id, label}] (la lista vive en el main).
+  listModels: () => ipcRenderer.invoke("settings:models"),
   saveSettings: (partial) => ipcRenderer.invoke("settings:save", partial),
 
   // Acciones con el texto reconocido
@@ -49,7 +51,9 @@ contextBridge.exposeInMainWorld("pill", {
   // la ruta por su cuenta con contextIsolation).
   planDroppedAudio: (file) => {
     const p = filePathOf(file);
-    if (!p) return Promise.resolve({ ok: false, error: "Arrastrá el archivo desde una carpeta del disco." });
+    // Sin i18n acá: el preload no carga el diccionario. El renderer traduce el
+    // código de error (ver renderer.js: transcribeFromPlan).
+    if (!p) return Promise.resolve({ ok: false, error: "", code: "no-path" });
     return ipcRenderer.invoke("audio:plan", p);
   },
   // Extrae audio del video, comprime a Opus y parte en trozos por silencios.
@@ -68,9 +72,10 @@ contextBridge.exposeInMainWorld("pill", {
   // Historial de transcripciones de archivo (.md en la carpeta elegida + índice).
   historySave: (payload) => ipcRenderer.invoke("history:save", payload),
   historyList: () => ipcRenderer.invoke("history:list"),
-  historyRead: (id) => ipcRenderer.invoke("history:read", id),
+  // which: "raw" -> el .crudo.md (texto sin formatear); vacío -> el formateado.
+  historyRead: (id, which) => ipcRenderer.invoke("history:read", id, which || ""),
   historyRemove: (id, alsoFile) => ipcRenderer.invoke("history:remove", id, alsoFile),
-  historyOpen: (id) => ipcRenderer.invoke("history:open", id),
+  historyOpen: (id, which) => ipcRenderer.invoke("history:open", id, which || ""),
   historyReveal: (id) => ipcRenderer.invoke("history:reveal", id),
   historyFolder: () => ipcRenderer.invoke("history:folder"),
   historyPickFolder: () => ipcRenderer.invoke("history:pick-folder"),
@@ -80,6 +85,19 @@ contextBridge.exposeInMainWorld("pill", {
   registerShortcut: (accelerator) => ipcRenderer.invoke("shortcut:register", accelerator),
   // Captura nativa del atajo (uiohook): resuelve con {ok, bind:{keycode,ctrl,...}}.
   captureShortcut: () => ipcRenderer.invoke("shortcut:capture"),
+  // ¿El hook de teclado cargó? {ok, error, transcribe:{ok}, translate:{ok}}.
+  hotkeysStatus: () => ipcRenderer.invoke("shortcut:status"),
+
+  // Sistema: versión/plataforma, log a archivo, links externos, actualizaciones.
+  appInfo: () => ipcRenderer.invoke("app:info"),
+  log: (level, msg) => ipcRenderer.send("log:write", level, String(msg)),
+  openLogs: () => ipcRenderer.invoke("log:open"),
+  openExternal: (url) => ipcRenderer.invoke("open:external", url),
+  checkUpdate: () => ipcRenderer.invoke("update:check"),
+
+  // ffmpeg: volver a buscarlo / instalarlo con winget (ventana visible).
+  ffmpegRecheck: () => ipcRenderer.invoke("audio:ffmpeg-recheck"),
+  ffmpegInstall: () => ipcRenderer.invoke("audio:ffmpeg-install"),
 
   // Push-to-talk global: el main avisa keydown/keyup del atajo (hook de teclado),
   // con el modo: "transcribe" (idioma config) | "translate" (→ inglés).

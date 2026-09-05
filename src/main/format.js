@@ -19,6 +19,7 @@ const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { t } = require("../i18n/i18n");
 
 // Pausa (en segundos) a partir de la cual un silencio corta párrafo. Por debajo es
 // una respiración normal entre frases; por encima es un cambio de idea o de turno.
@@ -67,9 +68,10 @@ function isAvailable() { return findCli() !== null; }
 /* Vuelve a buscar el CLI (por si el usuario lo instaló con la app abierta). */
 function resetCliCache() { _cliChecked = false; _cliPath = null; }
 
-const INSTALL_HINT =
+const INSTALL_HINT = t(
   "Para el formateo automático hace falta Claude Code: instalalo con " +
-  "`npm i -g @anthropic-ai/claude-code` y reabrí VozLibre.";
+  "`npm i -g @anthropic-ai/claude-code` y reabrí VozLibre."
+);
 
 /* ---------------------------------------------------------------------------
  * Preparación del texto: marcar las pausas ANTES de mandarlo al modelo
@@ -189,7 +191,7 @@ function buildPrompt(text, opts) {
 function runCli(prompt, model) {
   return new Promise((resolve) => {
     const cli = findCli();
-    if (!cli) return resolve({ ok: false, error: "Claude CLI no encontrado. " + INSTALL_HINT });
+    if (!cli) return resolve({ ok: false, error: t("Claude CLI no encontrado.") + " " + INSTALL_HINT });
 
     const args = ["-p", "--output-format", "json"];
     if (model) args.push("--model", model);
@@ -206,7 +208,7 @@ function runCli(prompt, model) {
     try {
       child = spawn(file, finalArgs, { windowsHide: true });
     } catch (e) {
-      return resolve({ ok: false, error: "No se pudo ejecutar Claude CLI: " + e.message });
+      return resolve({ ok: false, error: t("No se pudo ejecutar Claude CLI: {msg}", { msg: e.message }) });
     }
 
     let stdout = "", stderr = "", done = false;
@@ -214,7 +216,7 @@ function runCli(prompt, model) {
 
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* ya murió */ }
-      finish({ ok: false, error: "El formateo tardó demasiado (más de 3 min)." });
+      finish({ ok: false, error: t("El formateo tardó demasiado (más de 3 min).") });
     }, TIMEOUT_MS);
 
     child.stdout.on("data", (d) => { stdout += d.toString("utf8"); });
@@ -222,13 +224,13 @@ function runCli(prompt, model) {
 
     child.on("error", (e) => {
       clearTimeout(timer);
-      finish({ ok: false, error: "No se pudo ejecutar Claude CLI: " + e.message });
+      finish({ ok: false, error: t("No se pudo ejecutar Claude CLI: {msg}", { msg: e.message }) });
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        return finish({ ok: false, error: `Claude CLI falló (${code}): ${stderr.slice(0, 300)}` });
+        return finish({ ok: false, error: t("Claude CLI falló ({code}): {detail}", { code, detail: stderr.slice(0, 300) }) });
       }
       finish({ ok: true, text: unwrap(stdout) });
     });
@@ -312,7 +314,7 @@ async function formatPart(part, opts = {}) {
  *   parts: [{ text, start, end }]
  * onProgress(i, total) se llama antes de cada parte para que la píldora avance. */
 async function formatTranscript(parts, opts = {}) {
-  if (!isAvailable()) return { ok: false, error: "Claude CLI no encontrado. " + INSTALL_HINT };
+  if (!isAvailable()) return { ok: false, error: t("Claude CLI no encontrado.") + " " + INSTALL_HINT };
 
   const chunks = [];
   for (let i = 0; i < parts.length; i++) {

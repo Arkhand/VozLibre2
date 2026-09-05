@@ -10,12 +10,16 @@
 </head>
 <body>
   <!-- Pildora. En reposo es COMPACTA: solo orbe + engranaje + cruz.
-       Se anade .has-result o .config-open para expandir el panel correspondiente. -->
+       Se anade .has-result o .config-open para expandir el panel correspondiente.
+
+       i18n: los textos visibles llevan data-i18n (texto plano), data-i18n="html"
+       (con etiquetas adentro), data-i18n-title o data-i18n-placeholder. El texto en
+       español ES la clave de traducción (ver src/i18n/i18n.js). -->
   <div class="pill" id="pill">
 
     <!-- Barra superior (siempre visible). Arrastra la ventana. -->
     <div class="bar" id="bar">
-      <button class="orb" id="recBtn" title="Mantené para grabar">
+      <button class="orb" id="recBtn" title="Mantené para grabar" data-i18n-title>
         <span class="orb-dot"></span>
       </button>
 
@@ -25,19 +29,31 @@
         <span class="timer" id="timer">00:00</span>
       </div>
 
-      <button class="icon-btn" id="fileBtn" title="Transcribir un audio o video (.ogg de WhatsApp, .mp4, .mp3…)">📎</button>
-      <button class="icon-btn" id="meetBtn" title="Grabar una reunión (Teams, Zoom, Meet…)">🎙️</button>
-      <button class="icon-btn" id="historyBtn" title="Historial de transcripciones">🕘</button>
-      <button class="icon-btn" id="configBtn" title="Configuración">⚙</button>
-      <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)">✕</button>
+      <button class="icon-btn" id="fileBtn" title="Transcribir un audio o video (.ogg de WhatsApp, .mp4, .mp3…)" data-i18n-title>📎</button>
+      <button class="icon-btn" id="meetBtn" title="Grabar una reunión (Teams, Zoom, Meet…)" data-i18n-title>🎙️</button>
+      <button class="icon-btn" id="historyBtn" title="Historial de transcripciones" data-i18n-title>🕘</button>
+      <button class="icon-btn" id="configBtn" title="Configuración" data-i18n-title>⚙</button>
+      <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)" data-i18n-title>✕</button>
+    </div>
+
+    <!-- Panel de AVISOS: cosas que conviene saber al arrancar (falta ffmpeg, no hay
+         Claude CLI, hay versión nueva, los atajos no cargaron). Se muestran de a
+         uno, en cola, y nunca encima de la config. -->
+    <div class="panel notice" id="noticePanel">
+      <div class="notice-head">
+        <p class="fc-title" id="noticeTitle"></p>
+        <button class="hist-act notice-close" id="noticeClose" title="Cerrar" data-i18n-title>✕</button>
+      </div>
+      <p class="fc-detail" id="noticeText"></p>
+      <div class="panel-foot notice-btns" id="noticeBtns"></div>
     </div>
 
     <!-- Panel de RESULTADO (transcripción). -->
     <div class="panel" id="resultPanel">
-      <div class="result empty" id="result">El texto transcripto aparecerá acá…</div>
+      <div class="result empty" id="result" data-i18n>El texto transcripto aparecerá acá…</div>
       <div class="panel-foot">
-        <button class="sec" id="copyBtn" disabled>📋 Copiar</button>
-        <button class="sec" id="clearBtn" disabled>🗑️ Limpiar</button>
+        <button class="sec" id="copyBtn" disabled data-i18n>📋 Copiar</button>
+        <button class="sec" id="clearBtn" disabled data-i18n>🗑️ Limpiar</button>
       </div>
       <!-- Dónde quedó guardado el .md (aparece tras transcribir un archivo). -->
       <div class="saved-path" id="savedPath" hidden></div>
@@ -47,25 +63,25 @@
     <!-- Confirmación ANTES de grabar una reunión: dice qué dispositivos se van a
          usar, para no descubrir a los 40 minutos que se grabó la salida equivocada. -->
     <div class="panel meet-confirm" id="meetConfirm" hidden>
-      <p class="fc-title">🎙️ Grabar la reunión</p>
+      <p class="fc-title" data-i18n>🎙️ Grabar la reunión</p>
       <div class="mc-devs">
         <div class="mc-dev">
-          <span class="mc-dev-k">🔊 Se graba de</span>
+          <span class="mc-dev-k" data-i18n>🔊 Se graba de</span>
           <span class="mc-dev-v" id="mcOut">—</span>
         </div>
         <div class="mc-dev">
-          <span class="mc-dev-k">🎤 Tu voz</span>
+          <span class="mc-dev-k" data-i18n>🎤 Tu voz</span>
           <span class="mc-dev-v" id="mcMic">—</span>
         </div>
       </div>
-      <p class="mc-warn" id="mcWarn">
+      <p class="mc-warn" id="mcWarn" data-i18n>
         Se captura la salida por defecto de Windows. Si la reunión suena por otro
         dispositivo, cambialo en Windows antes de empezar.
       </p>
-      <p class="cfg-hint">Windows va a pedirte compartir una pantalla: solo se usa el audio, no se graba la imagen.</p>
+      <p class="cfg-hint" data-i18n>Windows va a pedirte compartir una pantalla: solo se usa el audio, no se graba la imagen.</p>
       <div class="panel-foot">
-        <button class="sec" id="mcCancel">Cancelar</button>
-        <button class="sec primary" id="mcOk">Empezar a grabar</button>
+        <button class="sec" id="mcCancel" data-i18n>Cancelar</button>
+        <button class="sec primary" id="mcOk" data-i18n>Empezar a grabar</button>
       </div>
     </div>
 
@@ -74,22 +90,22 @@
     <div class="panel meeting" id="meetPanel">
       <div class="meet-head">
         <span class="meet-dot" id="meetDot"></span>
-        <span class="meet-state" id="meetState">Grabando reunión</span>
+        <span class="meet-state" id="meetState" data-i18n>Grabando reunión</span>
         <span class="meet-timer" id="meetTimer">00:00</span>
       </div>
       <div class="meet-tracks">
         <div class="meet-track">
-          <span class="meet-label">🔊 Reunión</span>
+          <span class="meet-label" data-i18n>🔊 Reunión</span>
           <div class="meet-bar"><div class="meet-fill" id="meetLvlSys"></div></div>
         </div>
         <div class="meet-track">
-          <span class="meet-label">🎤 Yo</span>
+          <span class="meet-label" data-i18n>🎤 Yo</span>
           <div class="meet-bar"><div class="meet-fill" id="meetLvlMic"></div></div>
         </div>
       </div>
-      <p class="meet-note" id="meetNote">Se transcribe por partes mientras grabás.</p>
+      <p class="meet-note" id="meetNote" data-i18n>Se transcribe por partes mientras grabás.</p>
       <div class="panel-foot">
-        <button class="sec danger" id="meetStop">⏹ Detener y transcribir</button>
+        <button class="sec danger" id="meetStop" data-i18n>⏹ Detener y transcribir</button>
       </div>
     </div>
 
@@ -97,36 +113,36 @@
          grabación andando, se avisa antes, porque abrir esos paneles la detiene y
          perder una reunión a medias no se puede deshacer. -->
     <div class="panel meet-cut" id="meetCut" hidden>
-      <p class="fc-title">⏹ ¿Cortar la grabación?</p>
-      <p class="fc-detail" id="meetCutMsg">
+      <p class="fc-title" data-i18n>⏹ ¿Cortar la grabación?</p>
+      <p class="fc-detail" id="meetCutMsg" data-i18n>
         La reunión se está grabando. Si seguís, se detiene y se transcribe lo grabado
         hasta ahora.
       </p>
       <div class="panel-foot">
-        <button class="sec" id="meetCutCancel">Seguir grabando</button>
-        <button class="sec danger" id="meetCutOk">Detener y seguir</button>
+        <button class="sec" id="meetCutCancel" data-i18n>Seguir grabando</button>
+        <button class="sec danger" id="meetCutOk" data-i18n>Detener y seguir</button>
       </div>
     </div>
 
     <!-- Panel de HISTORIAL (se abre con 🕘). Lista los .md ya transcriptos. -->
     <div class="panel history" id="historyPanel">
       <div class="hist-head">
-        <span class="hist-title">Transcripciones guardadas</span>
-        <button class="sec tiny" id="histFolderBtn" title="Abrir la carpeta">📂 Carpeta</button>
+        <span class="hist-title" data-i18n>Transcripciones guardadas</span>
+        <button class="sec tiny" id="histFolderBtn" title="Abrir la carpeta" data-i18n-title data-i18n>📂 Carpeta</button>
       </div>
       <div class="hist-list" id="histList"></div>
       <div class="panel-foot">
-        <button class="sec" id="histClose">Cerrar</button>
+        <button class="sec" id="histClose" data-i18n>Cerrar</button>
       </div>
-      <small class="cfg-hint" id="histHint">Se muestran las últimas 10. Los .md quedan todos en la carpeta.</small>
+      <small class="cfg-hint" id="histHint" data-i18n>Se muestran las últimas 10. Los .md quedan todos en la carpeta.</small>
 
       <!-- Confirmación para borrar una transcripción (oculto por defecto). -->
       <div class="cfg-confirm" id="histConfirm" hidden>
-        <p class="cfg-confirm-msg" id="histConfirmMsg">¿Borrar esta transcripción?</p>
-        <p class="cfg-hint">El archivo .md va a la Papelera de reciclaje.</p>
+        <p class="cfg-confirm-msg" id="histConfirmMsg" data-i18n>¿Borrar esta transcripción?</p>
+        <p class="cfg-hint" data-i18n>El archivo .md va a la Papelera de reciclaje.</p>
         <div class="cfg-confirm-btns">
-          <button class="sec" id="histConfirmCancel">Cancelar</button>
-          <button class="sec danger" id="histConfirmOk">Borrar</button>
+          <button class="sec" id="histConfirmCancel" data-i18n>Cancelar</button>
+          <button class="sec danger" id="histConfirmOk" data-i18n>Borrar</button>
         </div>
       </div>
     </div>
@@ -138,119 +154,163 @@
          Guardar queda fijo abajo (fuera del scroll). -->
     <div class="panel config" id="configPanel">
       <div class="cfg-scroll" id="cfgScroll">
-      <div class="cfg-field">
-        <label for="cfgApiKey">API key de Groq</label>
-        <input type="password" id="cfgApiKey" placeholder="gsk_…" autocomplete="off" spellcheck="false">
+
+      <!-- Bienvenida: solo la primera vez (sin API key). Explica el único paso
+           obligatorio para que la app funcione. -->
+      <div class="cfg-welcome" id="cfgWelcome" hidden>
+        <p class="cfg-welcome-title" data-i18n>👋 ¡Hola! Un solo paso para empezar</p>
+        <p class="cfg-welcome-text" data-i18n="html">
+          VozLibre transcribe con <strong>Groq</strong>, que es gratis para uso personal.
+          Necesitás una API key: entrá a
+          <a href="#" data-ext="https://console.groq.com/keys">console.groq.com/keys</a>,
+          creá una cuenta, tocá <strong>Create API Key</strong>, copiá la clave (empieza con
+          <code>gsk_</code>) y pegala abajo. Después tocá <strong>Probar conexión</strong> y <strong>Guardar</strong>.
+        </p>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgMic">Micrófono</label>
-        <select id="cfgMic"><option value="">Por defecto del sistema</option></select>
+        <label for="cfgApiKey" data-i18n>API key de Groq</label>
+        <div class="cfg-row">
+          <input type="password" id="cfgApiKey" placeholder="gsk_…" autocomplete="off" spellcheck="false">
+          <button class="sec" id="cfgTestKey" title="Hace una llamada mínima a Groq para verificar la key" data-i18n-title data-i18n>🔗 Probar</button>
+        </div>
+        <small class="cfg-hint" id="cfgKeyHint" data-i18n="html">Se guarda cifrada en tu PC y solo viaja a la API de Groq. ¿No tenés una? <a href="#" data-ext="https://console.groq.com/keys">Sacala gratis acá</a>.</small>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgLang">Idioma del audio</label>
+        <label for="cfgMic" data-i18n>Micrófono</label>
+        <select id="cfgMic"><option value="" data-i18n>Por defecto del sistema</option></select>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgLang" data-i18n>Idioma del audio</label>
         <select id="cfgLang">
-          <option value="">Detectar automáticamente (recomendado)</option>
-          <option value="es">Español</option>
-          <option value="en">Inglés</option>
-          <option value="pt">Portugués</option>
-          <option value="fr">Francés</option>
-          <option value="it">Italiano</option>
-          <option value="de">Alemán</option>
-          <option value="ca">Catalán</option>
-          <option value="gl">Gallego</option>
-          <option value="eu">Euskera</option>
+          <option value="" data-i18n>Detectar automáticamente (recomendado)</option>
+          <option value="es" data-i18n>Español</option>
+          <option value="en" data-i18n>Inglés</option>
+          <option value="pt" data-i18n>Portugués</option>
+          <option value="fr" data-i18n>Francés</option>
+          <option value="it" data-i18n>Italiano</option>
+          <option value="de" data-i18n>Alemán</option>
+          <option value="ca" data-i18n>Catalán</option>
+          <option value="gl" data-i18n>Gallego</option>
+          <option value="eu" data-i18n>Euskera</option>
         </select>
-        <small class="cfg-hint">Fijar un idioma no es una pista: es una orden. Si el audio está en otro idioma, Whisper lo <strong>traduce</strong> en vez de transcribirlo literal. Dejalo en automático salvo que quieras justamente eso.</small>
+        <small class="cfg-hint" data-i18n="html">Fijar un idioma no es una pista: es una orden. Si el audio está en otro idioma, Whisper lo <strong>traduce</strong> en vez de transcribirlo literal. Dejalo en automático salvo que quieras justamente eso.</small>
+      </div>
+
+      <div class="cfg-field">
+        <label for="cfgModel" data-i18n>Modelo de transcripción</label>
+        <select id="cfgModel"></select>
+        <small class="cfg-hint" data-i18n>El turbo responde más rápido y gasta menos cuota; el large-v3 completo es algo más preciso con audio difícil. Traducir a inglés usa siempre large-v3 (el único que lo soporta).</small>
       </div>
 
       <div class="cfg-field">
         <label class="cfg-check">
           <input type="checkbox" id="cfgFormat">
-          <span>Dar formato al texto con Claude (Markdown)</span>
+          <span data-i18n>Dar formato al texto con Claude (Markdown)</span>
         </label>
-        <small class="cfg-hint" id="cfgFormatHint">Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.</small>
+        <small class="cfg-hint" id="cfgFormatHint" data-i18n>Convierte el texto corrido en párrafos con puntuación, cortando donde hubo pausas reales en el audio. No inventa hablantes ni cambia las palabras.</small>
         <label class="cfg-check sub">
           <input type="checkbox" id="cfgTimestamps">
-          <span>Encabezados con marca de tiempo por tramo</span>
+          <span data-i18n>Encabezados con marca de tiempo por tramo</span>
         </label>
-        <small class="cfg-hint">Solo en audios largos que se cortan en partes.</small>
+        <small class="cfg-hint" data-i18n>Solo en audios largos que se cortan en partes.</small>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgMeetMic">Micrófono para reuniones 🎙️</label>
-        <select id="cfgMeetMic"><option value="">El mismo del dictado</option></select>
-        <small class="cfg-hint">Tu voz en las reuniones (pista "Yo"). Suele ser el de los auriculares, distinto del que usás para dictar.</small>
-        <label>Audio de la reunión 🔊</label>
+        <label for="cfgMeetMic" data-i18n>Micrófono para reuniones 🎙️</label>
+        <select id="cfgMeetMic"><option value="" data-i18n>El mismo del dictado</option></select>
+        <small class="cfg-hint" data-i18n>Tu voz en las reuniones (pista "Yo"). Suele ser el de los auriculares, distinto del que usás para dictar.</small>
+        <label data-i18n>Audio de la reunión 🔊</label>
         <div class="cfg-static" id="cfgMeetOut">—</div>
-        <small class="cfg-hint">A los demás se los graba de la salida <strong>por defecto de Windows</strong>; no se puede elegir otra desde acá. Si la reunión suena por otro dispositivo, cambiá el predeterminado en Windows antes de grabar.</small>
+        <small class="cfg-hint" data-i18n="html">A los demás se los graba de la salida <strong>por defecto de Windows</strong>; no se puede elegir otra desde acá. Si la reunión suena por otro dispositivo, cambiá el predeterminado en Windows antes de grabar.</small>
         <label class="cfg-check">
           <input type="checkbox" id="cfgMeetConfirm">
-          <span>Confirmar antes de empezar a grabar</span>
+          <span data-i18n>Confirmar antes de empezar a grabar</span>
         </label>
       </div>
 
       <div class="cfg-field">
         <label class="cfg-check">
           <input type="checkbox" id="cfgSaveHistory">
-          <span>Guardar un .md por cada archivo transcripto</span>
+          <span data-i18n>Guardar un .md por cada archivo transcripto</span>
         </label>
-        <small class="cfg-hint">Solo para archivos (📎 y drag &amp; drop). El dictado con atajo no se guarda.</small>
-        <label for="cfgFolder">Carpeta de las transcripciones</label>
+        <small class="cfg-hint" data-i18n="html">Archivos (📎 y drag &amp; drop) y reuniones. El dictado con atajo no se guarda. Si el texto pasó por Claude, se guarda también el crudo en un <code>.crudo.md</code> al lado.</small>
+        <label for="cfgFolder" data-i18n>Carpeta de las transcripciones</label>
         <div class="cfg-row">
           <input type="text" id="cfgFolder" readonly placeholder="Documentos\VozLibre">
-          <button class="sec" id="cfgFolderBtn">📂 Elegir…</button>
+          <button class="sec" id="cfgFolderBtn" data-i18n>📂 Elegir…</button>
         </div>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgAction">Al reconocer el texto</label>
+        <label for="cfgAction" data-i18n>Al reconocer el texto</label>
         <select id="cfgAction">
-          <option value="show">Solo mostrarlo</option>
-          <option value="paste">Pegarlo (Ctrl+V) en la app activa</option>
-          <option value="type">Simular pulsaciones de teclado</option>
+          <option value="show" data-i18n>Solo mostrarlo</option>
+          <option value="paste" data-i18n>Pegarlo (Ctrl+V) en la app activa</option>
+          <option value="type" data-i18n>Simular pulsaciones de teclado</option>
         </select>
-        <button class="sec test-btn" id="cfgTest">🧪 Probar acción (sin gastar API)</button>
-        <small class="cfg-hint" id="testHint">Hacé clic, tenés 1,5 s para enfocar tu app (Word/VDI) y se escribirá un texto de prueba.</small>
+        <button class="sec test-btn" id="cfgTest" data-i18n>🧪 Probar acción (sin gastar API)</button>
+        <small class="cfg-hint" id="testHint" data-i18n>Hacé clic, tenés 1,5 s para enfocar tu app (Word/VDI) y se escribirá un texto de prueba.</small>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgChunk">Partes de los audios largos</label>
+        <label for="cfgChunk" data-i18n>Partes de los audios largos</label>
         <select id="cfgChunk">
-          <option value="5">5 minutos por parte</option>
-          <option value="10">10 minutos por parte (recomendado)</option>
-          <option value="15">15 minutos por parte</option>
-          <option value="20">20 minutos por parte</option>
-          <option value="30">30 minutos por parte</option>
+          <option value="5" data-i18n>5 minutos por parte</option>
+          <option value="10" data-i18n>10 minutos por parte (recomendado)</option>
+          <option value="15" data-i18n>15 minutos por parte</option>
+          <option value="20" data-i18n>20 minutos por parte</option>
+          <option value="30" data-i18n>30 minutos por parte</option>
         </select>
-        <small class="cfg-hint">Los audios largos se cortan en silencios y se transcriben por partes. Partes más largas = menos pedidos a la API, pero más riesgo de que Groq las rechace.</small>
+        <small class="cfg-hint" data-i18n>Los audios largos se cortan en silencios y se transcriben por partes. Partes más largas = menos pedidos a la API, pero más riesgo de que Groq las rechace.</small>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgShortcut">Atajo: dictar (idioma de arriba)</label>
-        <input type="text" id="cfgShortcut" placeholder="Hacé clic y presioná la combinación" readonly>
-        <small class="cfg-hint">Mantenelo presionado para grabar desde cualquier app.</small>
+        <label for="cfgShortcut" data-i18n>Atajo: dictar (idioma de arriba)</label>
+        <input type="text" id="cfgShortcut" placeholder="Hacé clic y presioná la combinación" data-i18n-placeholder readonly>
+        <small class="cfg-hint" data-i18n>Mantenelo presionado para grabar desde cualquier app.</small>
       </div>
 
       <div class="cfg-field">
-        <label for="cfgShortcutTranslate">Atajo: traducir a inglés 🇬🇧</label>
-        <input type="text" id="cfgShortcutTranslate" placeholder="Hacé clic y presioná la combinación" readonly>
-        <small class="cfg-hint">Mantenelo presionado para grabar y traducir a inglés.</small>
+        <label for="cfgShortcutTranslate" data-i18n>Atajo: traducir a inglés 🇬🇧</label>
+        <input type="text" id="cfgShortcutTranslate" placeholder="Hacé clic y presioná la combinación" data-i18n-placeholder readonly>
+        <small class="cfg-hint" data-i18n>Mantenelo presionado para grabar y traducir a inglés.</small>
+        <!-- Si el hook de teclado no cargó, acá se explica (los atajos no van a andar). -->
+        <small class="cfg-hint warn" id="cfgHotkeysWarn" hidden></small>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-check">
+          <input type="checkbox" id="cfgAutostart">
+          <span data-i18n>Iniciar VozLibre con Windows</span>
+        </label>
+        <small class="cfg-hint" id="cfgAutostartHint" data-i18n>Arranca oculta en la bandeja al iniciar sesión. Si movés el .exe, se actualiza sola la próxima vez que la abras.</small>
+      </div>
+
+      <!-- Versión, actualizaciones y logs: lo que hace falta para pedir ayuda. -->
+      <div class="cfg-field cfg-about">
+        <div class="cfg-row cfg-about-row">
+          <span class="cfg-version" id="cfgVersion">VozLibre</span>
+          <button class="sec tiny" id="cfgUpdateBtn" title="Consulta la última versión publicada en GitHub" data-i18n-title data-i18n>🔄 Buscar actualizaciones</button>
+          <button class="sec tiny" id="cfgLogsBtn" title="Abre la carpeta con el registro de errores, para mandarlo si algo falla" data-i18n-title data-i18n>📂 Logs</button>
+        </div>
+        <small class="cfg-hint" id="cfgUpdateHint"></small>
       </div>
       </div><!-- /.cfg-scroll -->
 
       <div class="panel-foot">
-        <button class="sec primary" id="cfgSave">Guardar</button>
+        <button class="sec primary" id="cfgSave" data-i18n>Guardar</button>
         <span class="cfg-saved" id="cfgSaved"></span>
       </div>
 
       <!-- Confirmación al cerrar con cambios sin guardar (oculto por defecto). -->
       <div class="cfg-confirm" id="cfgConfirm" hidden>
-        <p class="cfg-confirm-msg">Hay cambios sin guardar. ¿Salir sin guardar?</p>
+        <p class="cfg-confirm-msg" data-i18n>Hay cambios sin guardar. ¿Salir sin guardar?</p>
         <div class="cfg-confirm-btns">
-          <button class="sec" id="cfgConfirmCancel">Seguir editando</button>
-          <button class="sec danger" id="cfgConfirmDiscard">Salir sin guardar</button>
+          <button class="sec" id="cfgConfirmCancel" data-i18n>Seguir editando</button>
+          <button class="sec danger" id="cfgConfirmDiscard" data-i18n>Salir sin guardar</button>
         </div>
       </div>
     </div>
@@ -258,11 +318,11 @@
     <!-- Confirmación para archivos largos: antes de convertir y gastar API se
          muestra duración y en cuántas partes se va a cortar. -->
     <div class="panel file-confirm" id="fileConfirm" hidden>
-      <p class="fc-title" id="fcTitle">Archivo largo</p>
+      <p class="fc-title" id="fcTitle" data-i18n>Archivo largo</p>
       <p class="fc-detail" id="fcDetail"></p>
       <div class="panel-foot">
-        <button class="sec" id="fcCancel">Cancelar</button>
-        <button class="sec primary" id="fcOk">Transcribir</button>
+        <button class="sec" id="fcCancel" data-i18n>Cancelar</button>
+        <button class="sec primary" id="fcOk" data-i18n>Transcribir</button>
       </div>
     </div>
 
@@ -271,13 +331,15 @@
          none) para que el dragleave del contenedor no se dispare de más. -->
     <div class="drop-overlay" id="dropOverlay">
       <span class="drop-icon">🎧</span>
-      <span class="drop-text">Soltá el audio o video para transcribirlo</span>
+      <span class="drop-text" data-i18n>Soltá el audio o video para transcribirlo</span>
     </div>
   </div>
 
-  <!-- Módulos del renderer (orden importa: ui y transcription definen los globals
-       VLUI/VLTranscription que renderer.js orquesta). defer = se ejecutan en orden
-       tras parsear el DOM. -->
+  <!-- Módulos del renderer (orden importa: i18n primero (define VLI18n), ui y
+       transcription definen los globals VLUI/VLTranscription que renderer.js
+       orquesta). defer = se ejecutan en orden tras parsear el DOM. -->
+  <script src="../i18n/es.js" defer></script>
+  <script src="../i18n/i18n.js" defer></script>
   <script src="ui.js" defer></script>
   <script src="transcription.js" defer></script>
   <script src="meeting.js" defer></script>

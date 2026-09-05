@@ -739,3 +739,76 @@ html, body {
 #historyPanel.confirming .hist-list,
 #historyPanel.confirming .panel-foot,
 #historyPanel.confirming #histHint { display: none; }
+
+
+/* ---------------------------------------------------------------------------
+   Avisos de arranque (panel en cola: ffmpeg, Claude CLI, versión nueva, atajos)
+   --------------------------------------------------------------------------- */
+.notice { display: none; padding-top: 10px; }
+.pill.noticing #noticePanel { display: block; }
+/* Nunca encima de la config ni de las confirmaciones/reunión: esos mandan. */
+.pill.config-open #noticePanel,
+.pill.history-open #noticePanel,
+.pill.meeting-on #noticePanel,
+.pill.meet-confirming #noticePanel,
+.pill.meet-cutting #noticePanel,
+.pill.file-confirming #noticePanel { display: none; }
+.notice-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.notice-head .fc-title { flex: 1 1 auto; }
+.notice-close {
+  width: 24px;
+  height: 24px;
+  border-left: 0;
+  border-radius: 6px;
+  flex: none;
+}
+.notice-btns {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.notice-btns .sec { font-size: 11.5px; padding: 6px 10px; }
+
+/* ----- Config: bienvenida (primer arranque), probar key, versión ----- */
+.cfg-welcome {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(129, 102, 241, 0.45);
+  background: rgba(129, 102, 241, 0.12);
+}
+.cfg-welcome[hidden] { display: none; }
+.cfg-welcome-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.cfg-welcome-text {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.cfg-welcome code { font-size: 11px; }
+.cfg-hint a, .cfg-welcome a {
+  color: #c4b5fd;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cfg-hint a:hover, .cfg-welcome a:hover { color: #fff; }
+.cfg-hint.ok { color: #86efac; }
+
+.cfg-about { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--glass-line); }
+.cfg-about-row { flex-wrap: wrap; }
+.cfg-version {
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}

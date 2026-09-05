@@ -19,13 +19,27 @@
  * Se expone como window.VLMeeting. Lo consume renderer.js.
  */
 (function () {
-  // Trozos de 5 minutos: se transcriben mientras la reunión sigue, así al cortar
+  const t = window.VLI18n.t;
+  // Trozos de ~5 minutos: se transcriben mientras la reunión sigue, así al cortar
   // el transcript ya está casi listo. Además ningún trozo se acerca al límite de
   // tamaño de Groq.
   const CHUNK_MS = 5 * 60 * 1000;
 
+  // El corte NO es a tiempo fijo: parar y rearrancar el MediaRecorder deja un hueco
+  // de decenas de ms y parte la frase que estaba en curso. Cumplidos los 5 min se
+  // espera a que las DOS pistas estén en silencio (nadie hablando) y recién ahí se
+  // corta. Si nadie se calla en CUT_GRACE_MS, se corta igual: mejor perder media
+  // palabra que un trozo eterno.
+  const CUT_GRACE_MS = 30 * 1000;
+  // Nivel (0..1, el mismo que ven los medidores) por debajo del cual una pista está
+  // en silencio. Equivale al umbral RMS del dictado (0.012 × 6).
+  const SILENCE_LEVEL = 0.075;
+  // Ticks seguidos (de 250 ms) en silencio antes de cortar: un solo tick puede caer
+  // entre dos sílabas; medio segundo callado ya es una pausa de verdad.
+  const SILENT_TICKS_TO_CUT = 2;
+
   // Etiquetas de cada pista. No son nombres: son de dónde vino el audio.
-  const LABELS = { sistema: "Reunión", mic: "Yo" };
+  const LABELS = { sistema: t("Reunión"), mic: t("Yo") };
 
   // Con parlantes abiertos el micrófono capta también a los demás, así que la misma
   // frase aparece en las dos pistas. La copia que llega después es el eco.
@@ -35,9 +49,10 @@
   let grabando = false;
   let pistas = [];          // [{ nombre, stream, recorder, trozos: [] }]
   let t0 = 0;               // marca de inicio (performance.now)
-  let chunkTimer = null;   // cronómetro/medidores (setTimeout encadenado)
-  let cortarTimer = null;  // corte de trozos cada CHUNK_MS (setInterval)
-  let indice = 0;
+  let chunkTimer = null;   // cronómetro/medidores/corte (setTimeout encadenado)
+  let trozoInicio = 0;     // segundo de la reunión en que arrancó el trozo actual
+  let silentTicks = 0;     // ticks seguidos con las dos pistas en silencio
+  let cortando = false;    // hay un corte en curso (stop -> onstop -> start)
 
   let cb = {
     getSettings: () => ({}),
@@ -63,7 +78,7 @@
     const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     st.getVideoTracks().forEach((t) => { t.stop(); st.removeTrack(t); });
     if (!st.getAudioTracks().length) {
-      throw new Error("Windows no entregó el audio del sistema.");
+      throw new Error(t("Windows no entregó el audio del sistema."));
     }
     return st;
   }
@@ -160,9 +175,9 @@
    * lo que vos digas). El audio del sistema NO es opcional: sin él no hay reunión
    * que grabar. */
   async function start() {
-    if (grabando) return { ok: false, error: "Ya hay una grabación en curso." };
+    if (grabando) return { ok: false, error: t("Ya hay una grabación en curso.") };
     const s = cb.getSettings();
-    if (!s.groqApiKey) return { ok: false, error: "Falta la API key de Groq. Abrí ⚙ y pegala." };
+    if (!s.groqApiKey) return { ok: false, error: t("⚠️ Falta tu API key de Groq. Abrí ⚙ y pegala.") };
 
     let sistema;
     try {
@@ -173,8 +188,8 @@
       return {
         ok: false,
         error: cancelado
-          ? "Cancelaste la captura. Para grabar hay que compartir una pantalla (solo se usa el audio)."
-          : "No se pudo capturar el audio del sistema: " + e.message,
+          ? t("Cancelaste la captura. Para grabar hay que compartir una pantalla (solo se usa el audio).")
+          : t("No se pudo capturar el audio del sistema: {msg}", { msg: e.message }),
       };
     }
 
@@ -183,7 +198,9 @@
     catch { /* seguimos sin micrófono: se graba solo la reunión */ }
 
     t0 = performance.now();
-    indice = 0;
+    trozoInicio = 0;
+    silentTicks = 0;
+    cortando = false;
     pistas = [];
 
     for (const [nombre, stream] of [["sistema", sistema], ["mic", mic]]) {
@@ -199,14 +216,14 @@
 
     if (!pistas.length) {
       sistema.getTracks().forEach((t) => t.stop());
-      return { ok: false, error: "No se pudo abrir ninguna pista de audio." };
+      return { ok: false, error: t("No se pudo abrir ninguna pista de audio.") };
     }
 
     // Si el usuario corta la compartición desde la barra de Windows, la pista de
     // sistema muere: hay que cerrar la grabación en vez de seguir grabando nada.
     sistema.getAudioTracks().forEach((t) => {
       t.addEventListener("ended", () => {
-        if (grabando) stop({ motivo: "Se cortó la captura del audio del sistema." });
+        if (grabando) stop({ motivo: t("Se cortó la captura del audio del sistema.") });
       });
     });
 
@@ -236,37 +253,49 @@
   }
 
   function arrancarTimers() {
-    // Cronómetro + medidores para la UI.
+    // Cronómetro + medidores para la UI, y la decisión de cuándo cortar el trozo.
     const tick = () => {
       if (!grabando) return;
-      cb.onTick(elapsed());
+      const ahora = elapsed();
+      cb.onTick(ahora);
       const niveles = {};
       for (const p of pistas) niveles[p.nombre] = p.medidor.nivel();
       cb.onLevel(niveles.mic || 0, niveles.sistema || 0);
+
+      // ¿Toca cortar? Cumplido el largo del trozo, se espera un silencio en las
+      // dos pistas; pasado el margen de gracia, se corta hable quien hable.
+      const enTrozo = (ahora - trozoInicio) * 1000;
+      if (!cortando && enTrozo >= CHUNK_MS) {
+        const callados = Object.values(niveles).every((n) => n < SILENCE_LEVEL);
+        silentTicks = callados ? silentTicks + 1 : 0;
+        if (silentTicks >= SILENT_TICKS_TO_CUT || enTrozo >= CHUNK_MS + CUT_GRACE_MS) cortarTrozo();
+      }
       chunkTimer = setTimeout(tick, 250);
     };
     tick();
-
-    // Corte de trozos: parar y volver a arrancar cada recorder. Es la forma
-    // confiable de obtener un archivo webm válido y completo por trozo (los datos
-    // sueltos de un timeslice no llevan cabecera y Whisper no los acepta).
-    cortarTimer = setInterval(() => {
-      if (!grabando) return;
-      for (const p of pistas) {
-        if (p.recorder.state === "recording") p.recorder.stop();
-      }
-      // El onstop entrega el trozo; volver a arrancar en el próximo turno del loop
-      // para que el evento llegue primero.
-      setTimeout(() => {
-        if (!grabando) return;
-        indice++;
-        for (const p of pistas) {
-          if (p.recorder.state === "inactive") p.recorder.start();
-        }
-      }, 0);
-    }, CHUNK_MS);
   }
 
+  // Corte de trozo: parar y volver a arrancar cada recorder. Es la forma confiable
+  // de obtener un archivo webm válido y completo por trozo (los datos sueltos de un
+  // timeslice no llevan cabecera y Whisper no los acepta).
+  function cortarTrozo() {
+    cortando = true;
+    silentTicks = 0;
+    for (const p of pistas) {
+      if (p.recorder.state === "recording") p.recorder.stop();
+    }
+    // El onstop entrega el trozo; volver a arrancar en el próximo turno del loop
+    // para que el evento llegue primero. El trozo nuevo arranca AHORA, no en un
+    // múltiplo de 5 min: como el corte espera un silencio, los trozos no son parejos.
+    setTimeout(() => {
+      if (!grabando) return;
+      trozoInicio = elapsed();
+      for (const p of pistas) {
+        if (p.recorder.state === "inactive") p.recorder.start();
+      }
+      cortando = false;
+    }, 0);
+  }
 
   // Entrega un trozo terminado al orquestador, con su ubicación en la línea de
   // tiempo de la reunión.
@@ -274,9 +303,8 @@
     if (!p.trozos.length) return;
     const blob = new Blob(p.trozos, { type: p.recorder.mimeType || "audio/webm" });
     p.trozos = [];
-    const inicio = indice * (CHUNK_MS / 1000);
-    const fin = inicio + (CHUNK_MS / 1000);
-    if (blob.size > 0) cb.onChunk(p.nombre, blob, inicio, Math.min(fin, elapsed()));
+    // El trozo va desde que arrancó su recorder hasta ahora (que es cuando paró).
+    if (blob.size > 0) cb.onChunk(p.nombre, blob, trozoInicio, elapsed());
   }
 
   /* Corta la grabación y devuelve la duración total. Los trozos finales salen por
@@ -287,8 +315,7 @@
     grabando = false;
 
     clearTimeout(chunkTimer);
-    clearInterval(cortarTimer);
-    chunkTimer = cortarTimer = null;
+    chunkTimer = null;
 
     for (const p of pistas) {
       try { if (p.recorder.state === "recording") p.recorder.stop(); } catch { /* ya parado */ }
@@ -314,6 +341,11 @@
   /* Intercala las líneas de ambas pistas por tiempo y saca los ecos.
    *
    *   porPista: { sistema: [{start, end, text}], mic: [...] }
+   *   start/end en segundos de la REUNIÓN (no del trozo): salen de los segmentos
+   *   que devuelve Whisper sumados al inicio del trozo. Con tiempos reales por
+   *   frase el diálogo se intercala como ocurrió; si todas las frases de un trozo
+   *   compartieran el mismo tiempo, saldrían primero todas las de una pista y
+   *   después todas las de la otra.
    *
    * Con parlantes abiertos la misma frase llega a las dos pistas. La copia que
    * aparece DESPUÉS es el eco — pero solo se descarta si no aporta nada: una línea
@@ -370,7 +402,7 @@
 
   window.VLMeeting = {
     configure, start, stop, isRecording, elapsed, merge, render, preview,
-    LABELS, CHUNK_MS,
+    LABELS, CHUNK_MS, SILENCE_LEVEL,
     // expuestos para tests
     _merge: merge,
   };

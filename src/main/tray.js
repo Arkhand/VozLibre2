@@ -19,7 +19,7 @@ function create() {
   const image = nativeImage.createFromPath(iconPath);
 
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip("VozLibre");
+  tray.setToolTip(`VozLibre ${app.getVersion()}`);
 
   const menu = Menu.buildFromTemplate([
     { label: "Mostrar VozLibre", click: () => windowMod.reveal() },

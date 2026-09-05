@@ -16,8 +16,12 @@
  * tecla real (para que la config asigne atajos presionándolos).
  */
 
+const { t } = require("../i18n/i18n");
+
 let uIOhook = null;       // instancia de uiohook (carga perezosa)
 let uioStarted = false;
+let lastError = "";       // por qué no cargó/arrancó el hook (para mostrarlo)
+let lastStatus = null;    // último resultado de register(), para que el renderer lo pida
 let enabled = true;       // se desactiva mientras la config está abierta
 let captureCb = null;     // si !=null, el próximo keydown se "captura" para la config
 let getWin = () => null;  // provista por init(): devuelve la BrowserWindow actual
@@ -40,8 +44,10 @@ function getUio() {
   if (uIOhook) return uIOhook;
   try {
     ({ uIOhook } = require("uiohook-napi"));
+    lastError = "";
   } catch (err) {
     console.error(`[uiohook] no disponible: ${err.message}`);
+    lastError = t("no se pudo cargar el hook de teclado (uiohook): {msg}", { msg: err.message });
     uIOhook = null;
   }
   return uIOhook;
@@ -105,8 +111,12 @@ function ensureRunning() {
   if (!uioStarted) {
     u.on("keydown", onKeydown);
     u.on("keyup", onKeyup);
-    try { u.start(); uioStarted = true; }
-    catch (err) { console.error(`[uiohook] start falló: ${err.message}`); return false; }
+    try { u.start(); uioStarted = true; lastError = ""; }
+    catch (err) {
+      console.error(`[uiohook] start falló: ${err.message}`);
+      lastError = t("el hook de teclado no pudo arrancar: {msg}", { msg: err.message });
+      return false;
+    }
   }
   return true;
 }
@@ -131,7 +141,13 @@ function register(cfg) {
   binds.translate = normalizeBind(cfg.shortcutTranslate);
   enabled = true;
   const ok = ensureRunning();
-  return { ok, transcribe: { ok: !!binds.transcribe }, translate: { ok: !!binds.translate } };
+  lastStatus = { ok, error: ok ? "" : (lastError || t("motivo desconocido")), transcribe: { ok: !!binds.transcribe }, translate: { ok: !!binds.translate } };
+  return lastStatus;
+}
+
+// Último resultado de register() (o un intento fresco si nunca se registró).
+function getStatus() {
+  return lastStatus || { ok: false, error: t("todavía no se registraron los atajos"), transcribe: { ok: false }, translate: { ok: false } };
 }
 
 // Desactiva la detección PTT (sin parar el hook). Usar al abrir la config, para que
@@ -144,7 +160,7 @@ function disable() {
 // Captura nativa: resuelve con el bind {keycode,...} de la próxima tecla real.
 // Timeout 8s. Desactiva PTT mientras captura.
 function capture() {
-  if (!ensureRunning()) return Promise.resolve({ ok: false, error: "uiohook no disponible" });
+  if (!ensureRunning()) return Promise.resolve({ ok: false, error: t("uiohook no disponible") });
   enabled = false;
   return new Promise((resolve) => {
     const timer = setTimeout(() => { captureCb = null; resolve({ ok: false, error: "timeout" }); }, 8000);
@@ -157,4 +173,4 @@ function stop() {
   if (uIOhook && uioStarted) { try { uIOhook.stop(); } catch {} uioStarted = false; }
 }
 
-module.exports = { init, register, disable, capture, stop };
+module.exports = { init, register, disable, capture, stop, getStatus };

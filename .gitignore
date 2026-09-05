@@ -39,3 +39,6 @@ settings.json
 /*.m4a
 /*.mp3
 /*.wav
+
+# Generado por npm run i18n:extract (lista de frases a traducir)
+src/i18n/msgids.json

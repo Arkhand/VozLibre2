@@ -10,7 +10,7 @@
  * keycode es la tecla FÍSICA (no el carácter), así funciona con cualquier layout.
  */
 
-const { app } = require("electron");
+const { app, safeStorage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -24,6 +24,9 @@ const DEFAULTS = {
   // idioma: con lang="es" un audio en inglés vuelve TRADUCIDO al español. Por eso
   // el default es autodetectar, y el idioma fijo queda para quien lo necesite.
   lang: "",
+  // Modelo de Whisper en Groq para TRANSCRIBIR (ver MODELS). Traducir usa siempre
+  // whisper-large-v3: es el único que soporta /audio/translations.
+  model: "whisper-large-v3-turbo",
   deviceId: "",          // micrófono elegido ("" = el por defecto del sistema)
   action: "show",        // qué hacer con el texto: "show" | "paste" | "type"
   shortcut: { keycode: 66, ctrl: false, shift: false, alt: false, meta: false },          // F8: dictar
@@ -56,11 +59,56 @@ const DEFAULTS = {
   saveHistory: true,
   // Carpeta destino de los .md. "" = Documentos\VozLibre (ver history.defaultFolder).
   historyFolder: "",
+
+  // ---- Sistema ----
+  // Registrar la app en el inicio de sesión de Windows (ver autostart.js).
+  startWithWindows: false,
+  // Idioma de la interfaz (ver src/i18n). Por ahora solo "es".
+  uiLang: "es",
+
+  // ---- Avisos de arranque (se muestran hasta que el usuario los cierre) ----
+  // "No avisar más" del aviso de ffmpeg ausente.
+  ffmpegNoticeDismissed: false,
+  // El aviso de que el formateo usa Claude CLI se muestra UNA vez.
+  claudeNoticeShown: false,
 };
+
+// Modelos de transcripción disponibles en Groq. Se valida contra esta lista para
+// que un settings.json editado a mano no mande un modelo inexistente a la API.
+const MODELS = [
+  { id: "whisper-large-v3-turbo", label: "Whisper large-v3 turbo (rápido, recomendado)" },
+  { id: "whisper-large-v3", label: "Whisper large-v3 (más preciso, más lento)" },
+];
+const MODEL_IDS = MODELS.map((m) => m.id);
 
 // Versión del esquema de settings. Sube cuando hay que migrar un settings.json
 // viejo (ver migrate).
 const SCHEMA_VERSION = 2;
+
+// ---- API key cifrada ----
+// La key se guarda cifrada con safeStorage (DPAPI en Windows: solo el mismo
+// usuario en la misma máquina puede descifrarla). En el JSON queda como
+// `groqApiKeyEnc` (base64) y NUNCA en texto plano. Un settings.json viejo con
+// `groqApiKey` plano se migra solo la primera vez que se carga.
+//
+// Si el cifrado no está disponible (Linux sin keyring, por ejemplo), se cae al
+// texto plano: peor que cifrado, pero mejor que perder la key.
+function canEncrypt() {
+  try { return app.isReady() && safeStorage.isEncryptionAvailable(); }
+  catch { return false; }
+}
+function encryptKey(plain) {
+  if (!plain) return "";
+  return safeStorage.encryptString(plain).toString("base64");
+}
+function decryptKey(b64) {
+  if (!b64) return "";
+  try { return safeStorage.decryptString(Buffer.from(b64, "base64")); }
+  catch (err) {
+    console.error(`[settings] no se pudo descifrar la API key: ${err.message}`);
+    return "";
+  }
+}
 
 function settingsPath() {
   // userData: ruta por-usuario fija y persistente que Electron crea/gestiona
@@ -86,24 +134,52 @@ function migrate(data) {
   return next;
 }
 
-function load() {
+// Lee el JSON tal cual está en disco (sin descifrar ni mezclar defaults).
+function readRaw() {
   try {
-    const raw = fs.readFileSync(settingsPath(), "utf8");
-    const data = migrate(JSON.parse(raw));
-    // Mezclar con defaults para tolerar settings.json viejos/incompletos.
-    return { ...DEFAULTS, ...data };
+    return migrate(JSON.parse(fs.readFileSync(settingsPath(), "utf8")));
   } catch {
-    return { ...DEFAULTS, schemaVersion: SCHEMA_VERSION };
+    return { schemaVersion: SCHEMA_VERSION };
   }
+}
+
+function writeRaw(data) {
+  try {
+    fs.writeFileSync(settingsPath(), JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error(`[settings] no se pudo guardar: ${err.message}`);
+  }
+}
+
+// Convierte el objeto en disco al objeto que usa la app: la key descifrada en
+// `groqApiKey` y el campo cifrado fuera de la vista.
+function fromDisk(raw) {
+  const { groqApiKeyEnc, ...rest } = raw;
+  const data = { ...DEFAULTS, ...rest };
+  if (groqApiKeyEnc) data.groqApiKey = decryptKey(groqApiKeyEnc);
+  if (!MODEL_IDS.includes(data.model)) data.model = DEFAULTS.model;
+  return data;
+}
+
+// Convierte el objeto de la app al objeto en disco: la key cifrada si se puede.
+function toDisk(data) {
+  const { groqApiKey, groqApiKeyEnc: _drop, ...rest } = data;
+  if (groqApiKey && canEncrypt()) return { ...rest, groqApiKeyEnc: encryptKey(groqApiKey) };
+  return { ...rest, groqApiKey: groqApiKey || "" };
+}
+
+function load() {
+  const raw = readRaw();
+  const data = fromDisk(raw);
+  // Migración perezosa: una key en texto plano en disco pasa a cifrada en cuanto
+  // se puede. Se hace acá y no en migrate() porque el cifrado necesita la app lista.
+  if (raw.groqApiKey && canEncrypt()) writeRaw(toDisk(data));
+  return data;
 }
 
 function save(partial) {
   const next = { ...load(), ...partial };
-  try {
-    fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), "utf8");
-  } catch (err) {
-    console.error(`[settings] no se pudo guardar: ${err.message}`);
-  }
+  writeRaw(toDisk(next));
   return next;
 }
 
@@ -120,4 +196,4 @@ function resolveFormatDefault(cliAvailable) {
   return save({ formatMarkdown: !!cliAvailable });
 }
 
-module.exports = { load, save, settingsPath, resolveFormatDefault, DEFAULTS, SCHEMA_VERSION };
+module.exports = { load, save, settingsPath, resolveFormatDefault, DEFAULTS, SCHEMA_VERSION, MODELS, MODEL_IDS };
