@@ -812,3 +812,24 @@ html, body {
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* Mute del micrófono en la reunión (pista "Yo"). */
+.meet-mute {
+  flex: none;
+  width: 26px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.meet-mute:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.meet-mute:disabled { opacity: 0.35; cursor: not-allowed; }
+.meet-mute.muted {
+  border-color: rgba(244, 63, 94, 0.6);
+  background: rgba(244, 63, 94, 0.18);
+  color: #ffd9df;
+}

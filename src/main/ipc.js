@@ -314,7 +314,13 @@ function registerIpc() {
   ipcMain.handle("format:status", () => ({
     available: format.isAvailable(),
     hint: format.INSTALL_HINT,
+    // Último resultado del chequeo real (null si todavía no corrió).
+    health: format.health(),
   }));
+
+  // Chequeo real: una llamada mínima al CLI. force=true repite aunque haya
+  // resultado guardado (botón "Volver a probar").
+  ipcMain.handle("format:health", (_e, force) => format.healthCheck(!!force));
 
   // Re-chequea el CLI (por si lo instalaste con VozLibre abierto).
   ipcMain.handle("format:recheck", () => {
@@ -358,6 +364,39 @@ function registerIpc() {
   });
 
   ipcMain.handle("history:list", () => ({ ok: true, entries: history.list() }));
+
+  // Volver a formatear una entrada que quedó sin formato o con formato parcial
+  // (el CLI falló, no estaba instalado, etc.). Se toma el crudo (el .crudo.md si
+  // existe; si no, el .md principal, que en ese caso ES el crudo), se formatea
+  // entero y se reescribe el .md en el mismo lugar. Sin silencios ni tramos: los
+  // párrafos salen de la puntuación.
+  ipcMain.handle("history:reformat", async (e, id) => {
+    if (!format.isAvailable()) return { ok: false, error: t("Claude CLI no encontrado.") + " " + format.INSTALL_HINT };
+    const entry = history.list().find((x) => x.id === id);
+    if (!entry) return { ok: false, error: t("Entrada no encontrada.") };
+    if (entry.missing) return { ok: false, error: t("El archivo ya no está en {path}", { path: entry.path }) };
+
+    const src = history.read(id, entry.hasRaw ? "raw" : "");
+    if (!src.ok) return src;
+    const rawText = (src.body || "").trim();
+    if (!rawText) return { ok: false, error: t("No hay texto para formatear.") };
+
+    const send = (payload) => {
+      if (!e.sender.isDestroyed()) e.sender.send("format:progress", payload);
+    };
+    const r = await format.formatTranscript(
+      [{ text: rawText, start: 0, end: entry.duration || 0 }],
+      { language: entry.language || "", showTimestamps: false, silences: [], onProgress: (i, total) => send({ index: i, total }) }
+    );
+    // Con una sola parte, "parcial" es fallo total: se deja el archivo como estaba.
+    if (!r.ok || r.partial || !r.text) {
+      return { ok: false, error: r.error || t("no se pudo formatear") };
+    }
+    const w = history.rewrite(id, { text: r.text, rawText, formatted: true, partial: false });
+    if (!w.ok) return w;
+    console.log(`history reformat: ${entry.path}`);
+    return { ok: true, path: w.path, rawPath: w.rawPath, text: r.text };
+  });
   // which: "raw" -> el .crudo.md; vacío -> el principal.
   ipcMain.handle("history:read", (_e, id, which) => history.read(id, which === "raw" ? "raw" : ""));
   ipcMain.handle("history:remove", (_e, id, alsoFile) => history.remove(id, !!alsoFile));

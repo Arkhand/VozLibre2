@@ -161,6 +161,84 @@ function rawNameFor(mdPath) {
   return mdPath.replace(/\.md$/i, "") + ".crudo.md";
 }
 
+// Error de escritura a mensaje legible (misma redacción en save y rewrite).
+function fsWriteError(e, folder) {
+  if (e.code === "EACCES" || e.code === "EPERM") {
+    return { ok: false, error: t("Sin permisos para escribir en \"{folder}\".", { folder }) };
+  }
+  if (e.code === "ENOSPC") return { ok: false, error: t("No queda espacio en el disco.") };
+  return { ok: false, error: t("No se pudo guardar el .md: {msg}", { msg: e.message }) };
+}
+
+/* Cuerpo "puro" de un .md nuestro: sin frontmatter, sin el título y subtítulo
+ * que agrega buildMarkdown y sin los avisos en blockquote (⚠️ sin formatear,
+ * 📝 crudo). Es lo que hay que mandar a formatear de nuevo: si se mandara el
+ * aviso, el modelo lo tomaría como parte del texto. */
+function extractBody(md) {
+  const lines = String(md || "").replace(/^---\n[\s\S]*?\n---\n/, "").split("\n");
+  let i = 0;
+  const skipBlank = () => { while (i < lines.length && !lines[i].trim()) i++; };
+  skipBlank();
+  if (i < lines.length && /^# /.test(lines[i])) i++;
+  skipBlank();
+  if (i < lines.length && /^_.*_$/.test(lines[i].trim())) i++;
+  skipBlank();
+  while (i < lines.length && /^>/.test(lines[i])) i++;
+  return lines.slice(i).join("\n").trim();
+}
+
+/* Reescribe una entrada existente con texto nuevo (re-formateo desde el
+ * historial). El .md principal conserva su ruta; si la entrada estaba sin
+ * formatear, el crudo no existía aparte y se guarda ahora al lado (.crudo.md).
+ *   opts: { text, rawText, formatted, partial, failedCount, formatError }
+ * Devuelve { ok, path, rawPath, entry } | { ok:false, error }. */
+function rewrite(id, opts) {
+  const entries = loadIndex();
+  const entry = entries.find((e) => e.id === id);
+  if (!entry) return { ok: false, error: t("Entrada no encontrada.") };
+
+  const folder = path.dirname(entry.path);
+  const rawText = (opts.rawText || "").trim();
+  const needRaw = !!opts.formatted && !!rawText && rawText !== (opts.text || "").trim();
+  let rawTarget = entry.rawPath || "";
+  if (needRaw && !rawTarget) rawTarget = dedupe(folder, path.basename(rawNameFor(entry.path)));
+
+  const meta = {
+    kind: entry.kind === "meeting" ? "meeting" : "file",
+    title: entry.title,
+    sourceName: entry.sourceName || t("(desconocido)"),
+    date: String(entry.savedAt || "").slice(0, 10),
+    duration: entry.duration,
+    language: entry.language,
+    formatted: !!opts.formatted,
+    partial: !!opts.partial,
+    failedCount: opts.failedCount || 0,
+    formatError: opts.formatError || "",
+    rawFile: needRaw && rawTarget ? path.basename(rawTarget) : "",
+  };
+
+  try {
+    fs.writeFileSync(entry.path, buildMarkdown(meta, opts.text || ""), "utf8");
+    // El crudo se escribe solo si todavía no estaba en disco: si existe, es la
+    // fuente de verdad y no se toca.
+    if (needRaw && rawTarget && !fs.existsSync(rawTarget)) {
+      const rawMeta = { ...meta, formatted: false, partial: false, formatError: "", rawFile: "", raw: true, formattedFile: path.basename(entry.path) };
+      fs.writeFileSync(rawTarget, buildMarkdown(rawMeta, rawText), "utf8");
+    }
+  } catch (e) {
+    return fsWriteError(e, folder);
+  }
+
+  Object.assign(entry, {
+    formatted: meta.formatted,
+    partial: meta.partial,
+    rawPath: needRaw ? rawTarget : (entry.rawPath || ""),
+    chars: (opts.text || "").length,
+  });
+  saveIndex(entries);
+  return { ok: true, path: entry.path, rawPath: entry.rawPath || "", entry };
+}
+
 /* Guarda la transcripción y la registra en el índice.
  *   opts: { folder, sourceName, sourcePath, duration, language, text, rawText,
  *           formatted, partial, failedCount, formatError }
@@ -205,13 +283,7 @@ function save(opts) {
     rawFile: rawTarget ? path.basename(rawTarget) : "",
   };
 
-  const writeError = (e) => {
-    if (e.code === "EACCES" || e.code === "EPERM") {
-      return { ok: false, error: t("Sin permisos para escribir en \"{folder}\".", { folder }) };
-    }
-    if (e.code === "ENOSPC") return { ok: false, error: t("No queda espacio en el disco.") };
-    return { ok: false, error: t("No se pudo guardar el .md: {msg}", { msg: e.message }) };
-  };
+  const writeError = (e) => fsWriteError(e, folder);
 
   try {
     fs.writeFileSync(target, buildMarkdown(meta, opts.text || ""), "utf8");
@@ -278,7 +350,8 @@ function read(id, which = "") {
   try {
     const raw = fs.readFileSync(file, "utf8");
     const body = raw.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
-    return { ok: true, text: body, entry };
+    // text: lo que se muestra (con título y avisos). body: solo la transcripción.
+    return { ok: true, text: body, body: extractBody(raw), entry };
   } catch (e) {
     if (e.code === "ENOENT") {
       return { ok: false, error: t("El archivo ya no está en {path}", { path: file }) };
@@ -319,7 +392,7 @@ function clear() {
 }
 
 module.exports = {
-  save, list, read, remove, clear, pathFor,
+  save, list, read, remove, clear, pathFor, rewrite, extractBody,
   defaultFolder, folderFor, indexPath, buildMarkdown, MEETINGS_SUBDIR, rawNameFor,
   // expuestos para tests
   _safeName: safeName,

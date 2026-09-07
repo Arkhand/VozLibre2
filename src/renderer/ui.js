@@ -18,7 +18,7 @@
     // Reunión en curso
     meetPanel: $("meetPanel"), meetDot: $("meetDot"), meetState: $("meetState"),
     meetTimer: $("meetTimer"), meetLvlSys: $("meetLvlSys"), meetLvlMic: $("meetLvlMic"),
-    meetNote: $("meetNote"), meetStop: $("meetStop"),
+    meetNote: $("meetNote"), meetStop: $("meetStop"), meetMute: $("meetMute"),
     // Historial
     historyPanel: $("historyPanel"), histList: $("histList"), histClose: $("histClose"),
     histFolderBtn: $("histFolderBtn"), savedPath: $("savedPath"), histHint: $("histHint"),
@@ -83,6 +83,7 @@
     onHistoryOpenFile: () => {},    // (id, which) abrir el .md (which="raw": el crudo) con la app del sistema
     onListModels: () => [],         // -> [{id, label}] modelos de transcripción
     onHistoryReveal: () => {},      // (id) mostrar en el explorador
+    onHistoryReformat: () => {},    // (id) volver a formatear (entrada sin formato / parcial)
     onHistoryRemove: () => {},      // (id, borrarArchivo) sacar del índice; con true manda el .md a la Papelera
     onGetMeetingOutput: async () => "",  // nombre de la salida por defecto de Windows
     // Config: carpeta y estado del CLI
@@ -94,6 +95,7 @@
     // Reuniones
     onMeetStart: () => {},
     onMeetStop: () => {},
+    onMeetMute: () => false,    // (bool) silenciar tu micrófono; devuelve el estado
     // Sistema (config)
     onAppInfo: async () => ({ version: "", packaged: false, autostart: { supported: false } }),
     onOpenExternal: () => {},        // (url) abrir en el navegador (hosts permitidos)
@@ -335,6 +337,9 @@
     if (meetingOn) {
       el.meetTimer.textContent = "00:00";
       setMeetingLevels(0, 0);
+      // El mute arranca apagado en cada reunión. Sin micrófono no hay qué mutear.
+      setMuteUI(false);
+      el.meetMute.disabled = info.hasMic === false;
       // Sin micrófono se graba igual, pero conviene decirlo: si no, el usuario cree
       // que se está grabando su voz y descubre que no al leer el transcript.
       // Se deja a la vista de qué dispositivo se está grabando: si es el
@@ -348,6 +353,13 @@
       el.meetState.textContent = t("Grabando reunión");
     }
     refreshLayout();
+  }
+
+  // Botón de mute de la pista "Yo": estado visual.
+  function setMuteUI(muted) {
+    el.meetMute.classList.toggle("muted", !!muted);
+    el.meetMute.textContent = muted ? "🔇" : "🎤";
+    el.meetMute.title = muted ? t("Micrófono silenciado — clic para reactivar") : t("Silenciar tu micrófono");
   }
 
   function setMeetingTime(seconds) {
@@ -426,6 +438,7 @@
       if (e.duration) bits.push(fmtDuration(e.duration));
       if (e.language) bits.push(e.language.toUpperCase());
       if (!e.formatted) bits.push(t("sin formato"));
+      else if (e.partial) bits.push(t("formato parcial"));
       meta.textContent = bits.filter(Boolean).join(" · ");
 
       main.append(title, meta);
@@ -447,6 +460,16 @@
       rawBtn.hidden = !e.hasRaw;
       rawBtn.addEventListener("click", () => cb.onHistoryOpenFile(e.id, "raw"));
 
+      // Volver a formatear: solo tiene sentido si el formateo no se hizo o quedó
+      // a medias (el CLI falló, no estaba, etc.). Reescribe el .md en su lugar.
+      const reformatBtn = document.createElement("button");
+      reformatBtn.className = "hist-act";
+      reformatBtn.textContent = "✨";
+      reformatBtn.title = t("Volver a formatear con Claude (reescribe el .md)");
+      reformatBtn.hidden = !!e.formatted && !e.partial;
+      reformatBtn.disabled = !!e.missing;
+      reformatBtn.addEventListener("click", () => cb.onHistoryReformat(e.id));
+
       const revealBtn = document.createElement("button");
       revealBtn.className = "hist-act";
       revealBtn.textContent = "📂";
@@ -460,7 +483,7 @@
       delBtn.title = t("Borrar (el .md va a la Papelera)");
       delBtn.addEventListener("click", () => askDelete(e));
 
-      row.append(main, openBtn, rawBtn, revealBtn, delBtn);
+      row.append(main, openBtn, rawBtn, reformatBtn, revealBtn, delBtn);
       el.histList.appendChild(row);
     }
   }
@@ -615,6 +638,11 @@
       el.cfgFormatHint.textContent =
         (st?.hint || t("Claude Code no está instalado.")) + " " +
         t("Sin esto la transcripción se guarda sin formato.");
+      el.cfgFormatHint.classList.add("warn");
+    } else if (st?.health && !st.health.ok) {
+      // Instalado pero no responde (viejo, sin login…): el check sigue habilitado,
+      // pero se avisa para que no sorprenda al final de una transcripción.
+      el.cfgFormatHint.textContent = t("Claude Code está instalado pero no responde: {error}", { error: st.health.error || "" });
       el.cfgFormatHint.classList.add("warn");
     } else {
       el.cfgFormatHint.textContent =
@@ -946,6 +974,10 @@
       else cb.onMeetStart();
     });
     el.meetStop.addEventListener("click", () => cb.onMeetStop());
+    el.meetMute.addEventListener("click", () => {
+      const muted = cb.onMeetMute(!el.meetMute.classList.contains("muted"));
+      setMuteUI(muted);
+    });
 
     // Historial
     el.historyBtn.addEventListener("click", toggleHistory);

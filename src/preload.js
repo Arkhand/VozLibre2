@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld("pill", {
   // Formateo a Markdown (Claude CLI, en el main: el renderer no puede spawnear).
   formatStatus: () => ipcRenderer.invoke("format:status"),
   formatRecheck: () => ipcRenderer.invoke("format:recheck"),
+  // ¿El CLI responde de verdad? {ok, error}. force: repetir el chequeo.
+  formatHealth: (force) => ipcRenderer.invoke("format:health", !!force),
   formatTranscript: (payload) => ipcRenderer.invoke("format:transcript", payload),
   onFormatProgress: (cb) => ipcRenderer.on("format:progress", (_e, p) => cb(p)),
 
@@ -75,6 +77,8 @@ contextBridge.exposeInMainWorld("pill", {
   // which: "raw" -> el .crudo.md (texto sin formatear); vacío -> el formateado.
   historyRead: (id, which) => ipcRenderer.invoke("history:read", id, which || ""),
   historyRemove: (id, alsoFile) => ipcRenderer.invoke("history:remove", id, alsoFile),
+  // Volver a formatear una entrada sin formato / parcial. {ok, path, rawPath, text}.
+  historyReformat: (id) => ipcRenderer.invoke("history:reformat", id),
   historyOpen: (id, which) => ipcRenderer.invoke("history:open", id, which || ""),
   historyReveal: (id) => ipcRenderer.invoke("history:reveal", id),
   historyFolder: () => ipcRenderer.invoke("history:folder"),

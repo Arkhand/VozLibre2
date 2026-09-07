@@ -411,6 +411,20 @@
     onFfmpegInstall: () => window.pill.ffmpegInstall(),
     onFfmpegRecheck: () => window.pill.ffmpegRecheck(),
     onHistoryReveal: (id) => window.pill.historyReveal(id),
+    // Re-formatear desde el historial: el main formatea y reescribe el .md; acá
+    // se muestra el avance (format:progress) y el resultado.
+    onHistoryReformat: async (id) => {
+      UI.closeHistory();
+      UI.setError("");
+      UI.setStatus(t("Dando formato al texto…"));
+      UI.setProgress(0);
+      const r = await window.pill.historyReformat(id);
+      UI.setProgress(null);
+      if (!r?.ok) { UI.setStatus(""); UI.setError(r?.error || t("no se pudo formatear")); return; }
+      UI.setResult(r.text);
+      UI.setSavedPath(r.path, r.rawPath);
+      UI.setStatus(t("Formateado y guardado ✓"));
+    },
     // La ✕ del historial borra de verdad: la UI ya pidió confirmación.
     onHistoryRemove: (id, alsoFile) => window.pill.historyRemove(id, !!alsoFile),
     onGetMeetingOutput: () => MT.preview().then((d) => d.salida),
@@ -422,6 +436,7 @@
     // ---- Reuniones ----
     onMeetStart: () => meetStart(),
     onMeetStop: () => meetStop(),
+    onMeetMute: (on) => MT.setMicMuted(on),
     onOpenHistoryFolder: async () => {
       const r = await window.pill.historyOpenFolder();
       if (!r?.ok) UI.setError(r?.error || t("No se pudo abrir la carpeta."));
@@ -516,6 +531,10 @@
 
     try {
       const fs = await window.pill.formatStatus();
+      // Con el CLI presente y el formateo prendido, probar que RESPONDA: un CLI
+      // viejo o sin login se ve solo al llamarlo, y descubrirlo al final de una
+      // reunión de una hora es tarde.
+      if (fs?.available && settings.formatMarkdown) checkClaudeHealth(false);
       if (!fs?.available && !settings.claudeNoticeShown) {
         UI.showNotice({
           title: t("ℹ️ El formateo usa Claude Code (opcional)"),
@@ -536,6 +555,26 @@
         if (u?.ok && u.available) showUpdateNotice(u);
       } catch (e) { log("warn", `update: ${e.message}`); }
     }, 4000);
+  }
+
+  async function checkClaudeHealth(force) {
+    let h;
+    try { h = await window.pill.formatHealth(force); }
+    catch (e) { log("error", `formatHealth: ${e.message}`); return; }
+    if (!h || h.ok) {
+      if (force) UI.setStatus(t("Claude Code responde ✓"));
+      return;
+    }
+    const versionIssue = /version .* required|does not support this model|claude update/i.test(h.error || "");
+    UI.showNotice({
+      title: t("⚠️ Claude Code está instalado pero no responde"),
+      text: t("El formateo va a fallar y las transcripciones se guardarán sin formato hasta que se arregle. Motivo: {error}", { error: h.error }) +
+        (versionIssue ? " " + t("Parece un problema de versión: abrí una terminal y corré `claude update` (o `npm i -g @anthropic-ai/claude-code@latest`).") : ""),
+      buttons: [
+        { label: t("Volver a probar"), primary: true, keep: true, onClick: async () => { UI.closeNotice(); await checkClaudeHealth(true); } },
+        { label: t("Entendido") },
+      ],
+    });
   }
 
   function showFfmpegNotice() {

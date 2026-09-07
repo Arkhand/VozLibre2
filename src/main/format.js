@@ -66,7 +66,35 @@ function findCli() {
 function isAvailable() { return findCli() !== null; }
 
 /* Vuelve a buscar el CLI (por si el usuario lo instaló con la app abierta). */
-function resetCliCache() { _cliChecked = false; _cliPath = null; }
+function resetCliCache() { _cliChecked = false; _cliPath = null; _health = null; }
+
+/* ---- ¿El CLI FUNCIONA? ----
+ * Que el ejecutable exista no alcanza: puede estar sin login, o viejo y rechazado
+ * por la API ("version X or newer is required"). Eso solo se ve al llamarlo. Se
+ * hace una llamada mínima al arrancar (en segundo plano) y se recuerda el
+ * resultado; "Volver a probar" lo repite. */
+let _health = null;        // { ok, error, checkedAt } | null (nunca probado)
+let _healthRunning = null; // promesa en vuelo, para no lanzar dos a la vez
+
+async function healthCheck(force = false) {
+  if (!isAvailable()) {
+    _health = { ok: false, error: t("Claude CLI no encontrado."), checkedAt: Date.now() };
+    return _health;
+  }
+  if (_health && !force) return _health;
+  if (_healthRunning) return _healthRunning;
+  _healthRunning = (async () => {
+    console.log("claude health: probando…");
+    const r = await runCli(t("Respondé únicamente con la palabra OK."));
+    _health = { ok: !!r.ok, error: r.ok ? "" : (r.error || t("sin detalle")), checkedAt: Date.now() };
+    console.log(`claude health: ${_health.ok ? "ok" : "FALLO: " + _health.error}`);
+    _healthRunning = null;
+    return _health;
+  })();
+  return _healthRunning;
+}
+
+function health() { return _health; }
 
 const INSTALL_HINT = t(
   "Para el formateo automático hace falta Claude Code: instalalo con " +
@@ -357,7 +385,7 @@ async function formatTranscript(parts, opts = {}) {
 }
 
 module.exports = {
-  isAvailable, resetCliCache, formatTranscript, formatPart,
+  isAvailable, resetCliCache, formatTranscript, formatPart, healthCheck, health,
   INSTALL_HINT, stamp,
   // expuestos para tests
   _markPauses: markPauses,

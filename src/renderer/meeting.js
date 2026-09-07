@@ -53,6 +53,10 @@
   let trozoInicio = 0;     // segundo de la reunión en que arrancó el trozo actual
   let silentTicks = 0;     // ticks seguidos con las dos pistas en silencio
   let cortando = false;    // hay un corte en curso (stop -> onstop -> start)
+  // Mute de la pista "Yo": la pista se deshabilita (graba silencio) y, si estuvo
+  // muteada durante TODO un trozo, ese trozo no se manda a Groq (silencio puro
+  // gasta cuota y encima hace alucinar a Whisper).
+  let micMuted = false;
 
   let cb = {
     getSettings: () => ({}),
@@ -89,18 +93,34 @@
    * dictado. Si el elegido ya no está (desconectaste los auriculares), se reintenta
    * con el del sistema en vez de quedarse sin la pista: grabar la reunión sin tu voz
    * es peor que grabarla con otro micrófono. */
+  // Procesado del micrófono: cancelación de eco (no volver a grabar lo que sale
+  // por los parlantes), supresión de ruido (teclado, aire acondicionado, calle) y
+  // ganancia automática. Chromium los aplica por defecto con {audio:true}, pero
+  // al fijar deviceId conviene pedirlos explícitos.
+  const MIC_PROCESSING = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
   async function abrirMic() {
     const s = cb.getSettings();
     const preferido = s.meetingMicId || s.deviceId || "";
     if (preferido) {
       try {
         return await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: preferido } },
+          audio: { deviceId: { exact: preferido }, ...MIC_PROCESSING },
         });
       } catch { /* ese micrófono ya no está: probamos con el del sistema */ }
     }
-    return navigator.mediaDevices.getUserMedia({ audio: true });
+    return navigator.mediaDevices.getUserMedia({ audio: MIC_PROCESSING });
   }
+
+  // Silenciar / reactivar tu micrófono durante la reunión. La pista sigue
+  // grabando (silencio), así los tiempos de los trozos no se corren.
+  function setMicMuted(on) {
+    micMuted = !!on;
+    const p = pistas.find((x) => x.nombre === "mic");
+    if (p) p.stream.getAudioTracks().forEach((tr) => { tr.enabled = !micMuted; });
+    return micMuted;
+  }
+  function isMicMuted() { return micMuted; }
 
   /* Nombre del dispositivo de SALIDA que se va a capturar.
    *
@@ -201,12 +221,15 @@
     trozoInicio = 0;
     silentTicks = 0;
     cortando = false;
+    micMuted = false;
     pistas = [];
 
     for (const [nombre, stream] of [["sistema", sistema], ["mic", mic]]) {
       if (!stream) continue;
       const rec = new MediaRecorder(stream, elegirMime());
-      const p = { nombre, stream, recorder: rec, trozos: [], medidor: medidor(stream) };
+      // mutedAll: ¿el mic estuvo muteado durante todo el trozo actual? Se decide
+      // en cada tick; al entregar el trozo, si sigue en true, no se manda.
+      const p = { nombre, stream, recorder: rec, trozos: [], medidor: medidor(stream), mutedAll: micMuted };
       rec.ondataavailable = (e) => { if (e.data.size > 0) p.trozos.push(e.data); };
       // Cada vez que el recorder para (por corte de trozo o por fin), se entrega
       // lo acumulado y se limpia para el trozo siguiente.
@@ -259,7 +282,10 @@
       const ahora = elapsed();
       cb.onTick(ahora);
       const niveles = {};
-      for (const p of pistas) niveles[p.nombre] = p.medidor.nivel();
+      for (const p of pistas) {
+        niveles[p.nombre] = p.nombre === "mic" && micMuted ? 0 : p.medidor.nivel();
+        if (p.nombre === "mic" && !micMuted) p.mutedAll = false;
+      }
       cb.onLevel(niveles.mic || 0, niveles.sistema || 0);
 
       // ¿Toca cortar? Cumplido el largo del trozo, se espera un silencio en las
@@ -291,6 +317,7 @@
       if (!grabando) return;
       trozoInicio = elapsed();
       for (const p of pistas) {
+        p.mutedAll = p.nombre === "mic" && micMuted;
         if (p.recorder.state === "inactive") p.recorder.start();
       }
       cortando = false;
@@ -303,6 +330,9 @@
     if (!p.trozos.length) return;
     const blob = new Blob(p.trozos, { type: p.recorder.mimeType || "audio/webm" });
     p.trozos = [];
+    // Mic muteado de punta a punta: silencio puro, no se manda (gasta cuota y
+    // Whisper inventa texto sobre el silencio).
+    if (p.nombre === "mic" && p.mutedAll) return;
     // El trozo va desde que arrancó su recorder hasta ahora (que es cuando paró).
     if (blob.size > 0) cb.onChunk(p.nombre, blob, trozoInicio, elapsed());
   }
@@ -402,6 +432,7 @@
 
   window.VLMeeting = {
     configure, start, stop, isRecording, elapsed, merge, render, preview,
+    setMicMuted, isMicMuted,
     LABELS, CHUNK_MS, SILENCE_LEVEL,
     // expuestos para tests
     _merge: merge,
