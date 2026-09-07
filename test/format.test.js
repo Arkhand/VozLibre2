@@ -54,3 +54,23 @@ test("stamp: mm:ss y hh:mm:ss", () => {
   assert.equal(format.stamp(65), "01:05");
   assert.equal(format.stamp(3661), "01:01:01");
 });
+
+test("parseCliOutput: un is_error en el sobre JSON es un fallo, aunque el exit sea 0", () => {
+  const sobre = JSON.stringify({ type: "result", is_error: true, result: "API Error: 400 Claude Code 2.1.177 does not support this model" });
+  const r = format._parseCliOutput(0, sobre, "");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /does not support this model/);
+  // Y nunca se toma ese texto como transcripción formateada.
+  assert.equal(r.text, undefined);
+});
+
+test("parseCliOutput: exit != 0 sin stderr muestra la cola de stdout, no un mensaje vacío", () => {
+  const r = format._parseCliOutput(1, "algo salió mal en stdout", "");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /algo salió mal/);
+});
+
+test("parseCliOutput: respuesta buena", () => {
+  const r = format._parseCliOutput(0, JSON.stringify({ result: "```markdown\nHola.\n```" }), "");
+  assert.deepEqual(r, { ok: true, text: "Hola." });
+});

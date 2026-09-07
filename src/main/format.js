@@ -229,16 +229,33 @@ function runCli(prompt, model) {
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code !== 0) {
-        return finish({ ok: false, error: t("Claude CLI falló ({code}): {detail}", { code, detail: stderr.slice(0, 300) }) });
-      }
-      finish({ ok: true, text: unwrap(stdout) });
+      finish(parseCliOutput(code, stdout, stderr));
     });
 
     // El prompt entero por stdin; cerrar para que el CLI sepa que terminó.
     child.stdin.on("error", () => { /* si el proceso ya murió, el 'close' resuelve */ });
     child.stdin.end(prompt, "utf8");
   });
+}
+
+/* Interpreta lo que devolvió el CLI. Con --output-format json el sobre trae
+ * `is_error`: un fallo de la API (modelo no soportado, versión vieja del CLI,
+ * sin login) viene AHÍ, en `result`, con stderr vacío y a veces hasta con exit 0.
+ * Sin mirar el sobre, ese texto de error terminaba pegado en el .md como si fuera
+ * la transcripción, o salía un "falló (1): " sin explicación. */
+function parseCliOutput(code, stdout, stderr) {
+  let env = null;
+  try { env = JSON.parse((stdout || "").trim()); } catch { /* no era JSON */ }
+  if (env && typeof env === "object" && env.is_error) {
+    const detail = String(env.result || env.error || "").slice(0, 300) || t("sin detalle");
+    return { ok: false, error: t("Claude CLI devolvió un error: {detail}", { detail }) };
+  }
+  if (code !== 0) {
+    // Sin stderr, lo único que hay para mostrar es la cola de stdout.
+    const detail = (stderr.trim() || stdout.trim()).slice(-300) || t("sin detalle");
+    return { ok: false, error: t("Claude CLI falló ({code}): {detail}", { code, detail }) };
+  }
+  return { ok: true, text: unwrap(stdout) };
 }
 
 /* Desenvuelve la respuesta del CLI: con --output-format json viene
@@ -347,5 +364,6 @@ module.exports = {
   _splitForCalls: splitForCalls,
   _stripFences: stripFences,
   _unwrap: unwrap,
+  _parseCliOutput: parseCliOutput,
   PARAGRAPH_PAUSE,
 };
