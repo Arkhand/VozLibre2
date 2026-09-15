@@ -2,6 +2,7 @@
  * =====================================
  * Pega los módulos del renderer entre sí y con el proceso main (window.pill):
  *   - VLUI            → UI/DOM (estados, layout, panel de config).
+ *   - VLProgress      → estado de avance de los trabajos largos (etapa, %, tiempos).
  *   - VLTranscription → grabación + llamada a Groq.
  *   - window.pill     → puente IPC (settings, paste/type, atajos, push-to-talk).
  * Acá viven: el flujo de grabar→reconocer→aplicar acción, el push-to-talk global y
@@ -12,6 +13,7 @@
   const UI = window.VLUI;
   const TR = window.VLTranscription;
   const MT = window.VLMeeting;
+  const JOB = window.VLProgress;
 
   let settings = {};
   // Errores del renderer al log del main (en el .exe no hay consola).
@@ -69,7 +71,8 @@
       // historial. Sin silencios: no pasó por ffmpeg, así que el formateador arma
       // los párrafos solo con la puntuación.
       if (plan.direct) {
-        UI.setStatus(t("Leyendo {name}…", { name: plan.name }));
+        JOB.start({ kind: "file", title: plan.name });
+        JOB.phase(t("Leyendo {name}…", { name: plan.name }));
         const r = await window.pill.readAudio(plan.path);
         if (!r.ok) { UI.setStatus(""); UI.setError(r.error); return; }
         const dur = plan.duration || 0;
@@ -84,10 +87,11 @@
       const ok = await UI.askFileConfirm(plan);
       if (!ok) { UI.setStatus(""); return; }
 
-      UI.setStatus(plan.isVideo ? t("Extrayendo el audio…") : t("Comprimiendo el audio…"));
-      UI.setProgress(0);
+      // Desde acá hay trabajo largo de verdad: el panel de avance queda a la
+      // vista hasta el final, pase por los paneles que pase el usuario.
+      JOB.start({ kind: "file", title: `${plan.name} · ${UI.fmtDuration(plan.duration)}` });
+      JOB.phase(plan.isVideo ? t("Extrayendo el audio del video…") : t("Comprimiendo el audio…"), { fraction: 0 });
       const prep = await window.pill.prepareAudio(plan.path);
-      UI.setProgress(null);
       if (!prep.ok) { UI.setStatus(""); UI.setError(prep.error); return; }
 
       try {
@@ -102,7 +106,7 @@
       }
     } finally {
       UI.setFileBusy(false);
-      UI.setProgress(null);
+      JOB.finish();
     }
   }
 
@@ -115,10 +119,18 @@
     const trozos = [];
     let language = "";
 
+    const unaSola = parts.length === 1;
+
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
-      UI.setStatus(t("Transcribiendo parte {i} de {n}…", { i: i + 1, n: parts.length }));
-      UI.setProgress(i / parts.length);
+      // done = partes YA terminadas: con eso el panel estima cuánto falta a
+      // partir de lo que tardaron las anteriores (nada de promedios inventados).
+      // Con una sola parte no hay nada que contar ni con qué estimar: barra
+      // indeterminada (se mueve) en vez de un 0 % que no avanza nunca.
+      JOB.phase(
+        unaSola ? t("Transcribiendo con Groq…") : t("Transcribiendo parte {i} de {n}…", { i: i + 1, n: parts.length }),
+        unaSola ? { steps: 0 } : { steps: parts.length, done: i }
+      );
 
       const r = await TR.transcribeToText(p.bytes, p.ext, "transcribe", p.mapping);
       if (r === null) {
@@ -128,7 +140,6 @@
           UI.setError(t("Falló la parte {i} de {n}. Arriba está lo que sí se transcribió.", { i: i + 1, n: parts.length }));
         }
         UI.setStatus("");
-        UI.setProgress(null);
         return;
       }
       // El idioma del primer trozo con texto manda: es el mismo audio de punta a
@@ -137,8 +148,8 @@
       if (r.text) trozos.push({ text: r.text, start: p.start ?? 0, end: p.end ?? 0 });
       UI.setResult(joinRaw(trozos)); // avance visible parte a parte
     }
+    JOB.phase(t("Transcripción completa"), { steps: parts.length, done: parts.length });
 
-    UI.setProgress(null);
     if (!trozos.length) { UI.setStatus(""); UI.setError(t("No se reconoció texto en el audio.")); return; }
 
     // Avisar si el audio no era el idioma configurado: es la causa más común de
@@ -146,6 +157,7 @@
     warnLanguageMismatch(language);
 
     const finished = await finishTranscript(trozos, { ...meta, language, kind: "file" });
+    JOB.finish();
     await applyAction(finished, true);
   }
 
@@ -183,8 +195,7 @@
     let formatted = false, partial = false, failedCount = 0, formatError = "";
 
     if (settings.formatMarkdown) {
-      UI.setStatus(t("Dando formato al texto…"));
-      UI.setProgress(0);
+      JOB.phase(t("Dando formato al texto…"), { fraction: 0 });
       const r = await window.pill.formatTranscript({
         parts: trozos,
         language: meta.language || "",
@@ -193,7 +204,6 @@
         showTimestamps: !meta.noTimestamps && !!settings.formatTimestamps && trozos.length > 1,
         silences: meta.silences || [],
       });
-      UI.setProgress(null);
 
       if (r?.ok && r.text) {
         text = r.text;
@@ -209,7 +219,7 @@
     }
 
     if (settings.saveHistory) {
-      UI.setStatus(t("Guardando…"));
+      JOB.phase(t("Guardando el .md…"), { steps: 0 });
       const s = await window.pill.historySave({
         kind: meta.kind || "file",
         sourceName: meta.sourceName || "audio",
@@ -233,9 +243,33 @@
   // todo el trabajo ya está hecho. Cada trozo transcripto se guarda con su pista y
   // su tiempo; al final se intercalan las dos pistas por tiempo.
   let meetLineas = { sistema: [], mic: [] };
-  let meetPendientes = [];    // transcripciones en vuelo
+  let meetPendientes = [];    // transcripciones lanzadas (promesas)
+  let meetEnVuelo = 0;        // cuántas siguen sin terminar AHORA
+  let meetCerrando = false;   // ya se detuvo: lo que queda es la cola final
+  let meetColaFinal = 0;      // cuántas había pendientes al detener (para el %)
   let meetIdioma = "";
   let meetT0 = null;
+
+  // Nombre de la reunión (sirve de título del trabajo y del .md guardado).
+  function meetNombre() {
+    const d = meetT0 || new Date();
+    return t("Reunión {date} {time}", {
+      date: d.toLocaleDateString("es-AR"),
+      time: `${String(d.getHours()).padStart(2, "0")}.${String(d.getMinutes()).padStart(2, "0")}`,
+    });
+  }
+
+  // Lo que se muestra en el panel de la reunión mientras grabás: líneas ya
+  // transcriptas y partes que están yendo a Groq en este momento. Sin esto, una
+  // reunión larga se ve igual esté transcribiendo o esté trabada.
+  function meetRefreshState() {
+    if (!MT.isRecording()) return;
+    const n = meetLineas.sistema.length + meetLineas.mic.length;
+    const cola = meetEnVuelo
+      ? " · " + t("{k} parte(s) transcribiéndose", { k: meetEnVuelo })
+      : "";
+    UI.setMeetingState(t("Grabando · {n} líneas transcriptas", { n }) + cola, true);
+  }
 
   async function meetStart() {
     if (MT.isRecording()) return;
@@ -251,6 +285,9 @@
 
     meetLineas = { sistema: [], mic: [] };
     meetPendientes = [];
+    meetEnVuelo = 0;
+    meetCerrando = false;
+    meetColaFinal = 0;
     meetIdioma = "";
     meetT0 = new Date();
 
@@ -266,18 +303,34 @@
   async function meetStop() {
     if (!MT.isRecording()) return;
     const r = MT.stop();
+    meetCerrando = true;
     UI.setMeetingState(t("Transcribiendo lo que falta…"));
+
+    // A partir de acá puede haber varios minutos de trabajo (las últimas partes,
+    // el formateo y el guardado). Todo eso va al panel de avance, que se ve con
+    // cualquier panel abierto.
+    JOB.start({
+      kind: "meeting",
+      title: `${meetNombre()} · ${UI.fmtDuration(r.duration || 0)}`,
+    });
+    JOB.phase(t("Cerrando la grabación…"));
 
     // Los últimos trozos salen por onChunk al parar los recorders: esperamos un
     // instante a que se encolen antes de esperar a que terminen todos.
     await new Promise((res) => setTimeout(res, 300));
+    meetColaFinal = meetEnVuelo;
+    if (meetColaFinal) {
+      JOB.phase(t("Transcribiendo las últimas {n} parte(s)…", { n: meetColaFinal }),
+        { steps: meetColaFinal, done: 0 });
+    }
     await Promise.allSettled(meetPendientes);
 
     UI.setMeetingUI(false);
+    JOB.phase(t("Uniendo las dos pistas…"), { steps: 0 });
 
     const segs = MT.merge(meetLineas);
     if (!segs.length) {
-      UI.setStatus("");
+      JOB.finish("");
       UI.setError(t("No se reconoció nada en la reunión."));
       return;
     }
@@ -287,10 +340,7 @@
     const crudo = MT.render(segs);
     UI.setResult(crudo);
 
-    const nombre = t("Reunión {date} {time}", {
-      date: meetT0.toLocaleDateString("es-AR"),
-      time: `${String(meetT0.getHours()).padStart(2, "0")}.${String(meetT0.getMinutes()).padStart(2, "0")}`,
-    });
+    const nombre = meetNombre();
     const texto = await finishTranscript(
       // Una sola "parte": el transcript ya viene ordenado y con sus marcas.
       [{ text: crudo, start: 0, end: r.duration || 0 }],
@@ -306,7 +356,7 @@
       }
     );
     UI.setResult(texto);
-    UI.setStatus(t("Listo — copiá el texto con 📋"));
+    JOB.finish(t("Listo — copiá el texto con 📋"));
   }
 
   // Cada trozo que cierra una pista se transcribe enseguida, en paralelo con la
@@ -314,20 +364,30 @@
   // (inicio del trozo + tiempo del segmento dentro del trozo): es lo que permite
   // intercalar las dos pistas en el orden en que se habló.
   function onMeetChunk(pista, blob, inicio) {
+    meetEnVuelo++;
+    meetRefreshState();
     const tarea = (async () => {
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const r = await TR.transcribeToText(bytes, "webm", "transcribe");
-      if (!r || !r.text) return;
-      if (!meetIdioma && r.language) meetIdioma = r.language;
-      const segs = Array.isArray(r.segments) && r.segments.length
-        ? r.segments.map((sg) => ({ start: inicio + sg.start, end: inicio + sg.end, text: sg.text }))
-        // Sin segmentos (no debería pasar con verbose_json): las líneas heredan el
-        // tiempo del trozo, ordenadas al menos entre sí.
-        : r.text.split("\n").map((l) => ({ start: inicio, end: inicio, text: l.trim() }));
-      for (const sg of segs) if (sg.text) meetLineas[pista].push(sg);
-      if (MT.isRecording()) {
-        const n = meetLineas.sistema.length + meetLineas.mic.length;
-        UI.setMeetingState(t("Grabando · {n} líneas transcriptas", { n }));
+      try {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const r = await TR.transcribeToText(bytes, "webm", "transcribe");
+        if (!r || !r.text) return;
+        if (!meetIdioma && r.language) meetIdioma = r.language;
+        const segs = Array.isArray(r.segments) && r.segments.length
+          ? r.segments.map((sg) => ({ start: inicio + sg.start, end: inicio + sg.end, text: sg.text }))
+          // Sin segmentos (no debería pasar con verbose_json): las líneas heredan el
+          // tiempo del trozo, ordenadas al menos entre sí.
+          : r.text.split("\n").map((l) => ({ start: inicio, end: inicio, text: l.trim() }));
+        for (const sg of segs) if (sg.text) meetLineas[pista].push(sg);
+      } finally {
+        meetEnVuelo--;
+        meetRefreshState();
+        // Ya se detuvo la reunión: lo que queda es la cola final, y ahí sí se
+        // puede decir cuánto falta (cuántas partes de cuántas).
+        if (meetCerrando && meetColaFinal) {
+          const hechas = meetColaFinal - meetEnVuelo;
+          JOB.phase(t("Transcribiendo las últimas partes… ({i} de {n})", { i: hechas, n: meetColaFinal }),
+            { steps: meetColaFinal, done: hechas });
+        }
       }
     })();
     meetPendientes.push(tarea);
@@ -342,10 +402,25 @@
     onChunk: onMeetChunk,
   });
 
+  // ---- Conectar el avance con la UI y con la bandeja ----
+  // La bandeja recibe el mismo estado: con la píldora escondida (✕), el tooltip
+  // del icono es la única forma de ver en qué anda sin volver a mostrarla.
+  JOB.configure({
+    onRender: (v) => {
+      UI.setJob(v);
+      // Trabajo terminado con la píldora escondida: un globo de Windows avisa.
+      if (!v.active && v.final) window.pill?.jobDone(v.final);
+    },
+    onTray: (text) => window.pill?.jobStatus(text),
+  });
+
   // ---- Conectar Transcription con la UI ----
   TR.configure({
     getSettings: () => settings,
-    onStatus: (m) => UI.setStatus(m),
+    // Con un trabajo largo en curso, los avisos sueltos de Groq (reintento por
+    // cuota, sin conexión) van a la segunda línea del panel de avance: la etapa
+    // ("parte 3 de 12") tiene que seguir a la vista.
+    onStatus: (m) => { if (JOB.isActive()) JOB.note(m); else UI.setStatus(m); },
     onError: (m) => UI.setError(m),
     onText: (text, _mode, opts) => applyAction(text, !!opts?.fromFile),
     onRecordingChange: (on) => UI.setRecordingUI(on),
@@ -416,14 +491,13 @@
     onHistoryReformat: async (id) => {
       UI.closeHistory();
       UI.setError("");
-      UI.setStatus(t("Dando formato al texto…"));
-      UI.setProgress(0);
+      JOB.start({ kind: "file", title: t("Volver a formatear") });
+      JOB.phase(t("Dando formato al texto…"), { fraction: 0 });
       const r = await window.pill.historyReformat(id);
-      UI.setProgress(null);
-      if (!r?.ok) { UI.setStatus(""); UI.setError(r?.error || t("no se pudo formatear")); return; }
+      if (!r?.ok) { JOB.finish(""); UI.setError(r?.error || t("no se pudo formatear")); return; }
       UI.setResult(r.text);
       UI.setSavedPath(r.path, r.rawPath);
-      UI.setStatus(t("Formateado y guardado ✓"));
+      JOB.finish(t("Formateado y guardado ✓"));
     },
     // La ✕ del historial borra de verdad: la UI ya pidió confirmación.
     onHistoryRemove: (id, alsoFile) => window.pill.historyRemove(id, !!alsoFile),
@@ -485,19 +559,21 @@
   window.pill.onAudioProgress((p) => {
     if (!p) return;
     if (p.stage === "convert") {
-      if (typeof p.progress === "number") UI.setProgress(p.progress);
+      if (typeof p.progress === "number") JOB.fraction(p.progress);
       return;
     }
-    if (p.stage === "silence") { UI.setStatus(t("Buscando los silencios para cortar…")); UI.setProgress(null); return; }
-    if (p.stage === "trim") { UI.setStatus(t("Sacando los silencios…")); UI.setProgress(null); return; }
-    if (p.stage === "split") { UI.setStatus(t("Cortando en {n} partes…", { n: p.total })); return; }
+    if (p.stage === "silence") { JOB.phase(t("Buscando los silencios para cortar…")); return; }
+    if (p.stage === "trim") { JOB.phase(t("Sacando los silencios…")); return; }
+    if (p.stage === "split") { JOB.phase(t("Cortando en {n} partes…", { n: p.total })); return; }
   });
 
   // ---- Avance del formateo (una llamada al CLI por parte) ----
   window.pill.onFormatProgress((p) => {
     if (!p || !p.total) return;
-    UI.setStatus(p.total > 1 ? t("Dando formato ({i} de {n})…", { i: p.index + 1, n: p.total }) : t("Dando formato al texto…"));
-    UI.setProgress(p.index / p.total);
+    JOB.phase(
+      p.total > 1 ? t("Dando formato ({i} de {n})…", { i: p.index + 1, n: p.total }) : t("Dando formato al texto…"),
+      { steps: p.total, done: p.index }
+    );
   });
 
   // ---- Avisos de arranque ----

@@ -92,6 +92,11 @@ contextBridge.exposeInMainWorld("pill", {
   // ¿El hook de teclado cargó? {ok, error, transcribe:{ok}, translate:{ok}}.
   hotkeysStatus: () => ipcRenderer.invoke("shortcut:status"),
 
+  // Estado del trabajo largo (archivo/reunión): alimenta el tooltip de la bandeja,
+  // que es lo único visible con la píldora escondida. jobDone avisa al terminar.
+  jobStatus: (text) => ipcRenderer.send("job:status", String(text || "")),
+  jobDone: (msg) => ipcRenderer.send("job:done", String(msg || "")),
+
   // Sistema: versión/plataforma, log a archivo, links externos, actualizaciones.
   appInfo: () => ipcRenderer.invoke("app:info"),
   log: (level, msg) => ipcRenderer.send("log:write", level, String(msg)),

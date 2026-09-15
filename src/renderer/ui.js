@@ -30,10 +30,12 @@
     // Confirmación para cortar una reunión en curso
     meetCut: $("meetCut"), meetCutMsg: $("meetCutMsg"),
     meetCutCancel: $("meetCutCancel"), meetCutOk: $("meetCutOk"),
-    // Confirmacion de archivo largo + progreso de conversion
+    // Confirmacion de archivo largo
     fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
     fcCancel: $("fcCancel"), fcOk: $("fcOk"),
-    progress: $("progress"), progressBar: $("progressBar"),
+    // Trabajo en curso (etapa, avance, tiempos)
+    jobLabel: $("jobLabel"), jobTime: $("jobTime"),
+    jobTrack: $("jobTrack"), jobFill: $("jobFill"), jobDetail: $("jobDetail"),
     barCenter: $("barCenter"), status: $("status"), timer: $("timer"),
     result: $("result"), copyBtn: $("copyBtn"), clearBtn: $("clearBtn"), err: $("err"),
     // Config
@@ -237,16 +239,70 @@
     if (r) r(answer);
   }
 
-  // Barra de progreso de ffmpeg (0..1). Con null se oculta.
-  function setProgress(value) {
-    if (value === null || value === undefined) {
-      el.progress.classList.remove("show");
-      el.progressBar.style.width = "0%";
-    } else {
-      el.progress.classList.add("show");
-      el.progressBar.style.width = Math.round(Math.max(0, Math.min(1, value)) * 100) + "%";
+  // ---------------------------------------------------------------------------
+  // Trabajo en curso (lo que dibuja VLProgress)
+  // ---------------------------------------------------------------------------
+  /* Recibe la foto del estado (view de VLProgress) y la pinta. Se llama una vez
+   * por segundo mientras haya trabajo, así que solo toca texto y un ancho.
+   *
+   * Con {active:false, final} el trabajo terminó: la barra se apaga y el mensaje
+   * final queda en la línea de estado de la barra superior (que sobrevive a
+   * cambiar de panel). */
+  let jobLabelShown = "";    // última etapa que se copió a la barra superior
+  let jobDetailShown = "";   // último detalle dibujado (para no remedir el alto de gusto)
+
+  function setJob(v) {
+    if (!v || !v.active) {
+      el.pill.classList.remove("job-on");
+      el.jobLabel.textContent = "";
+      el.jobDetail.textContent = "";
+      el.jobFill.style.width = "0%";
+      el.jobTrack.classList.remove("indeterminate");
+      // El mensaje final reemplaza a la etapa. Sin mensaje se limpia, pero solo
+      // si lo que hay es la etapa que pusimos nosotros: quien terminó el trabajo
+      // pudo haber dejado su propio estado ("Pegado ✓") y no hay que pisarlo.
+      if (v && v.final) setStatus(v.final);
+      else if (el.status.textContent === jobLabelShown) setStatus("");
+      else refreshLayout();
+      jobLabelShown = "";
+      jobDetailShown = "";
+      return;
     }
-    refreshLayout();
+
+    el.pill.classList.add("job-on");
+    el.jobLabel.textContent = v.label || t("Trabajando…");
+
+    // Arriba a la derecha va solo el transcurrido: es corto y deja lugar para la
+    // etapa, que es lo que más importa leer.
+    el.jobTime.textContent = v.elapsedText;
+
+    const indet = v.percent === null || v.percent === undefined;
+    el.jobTrack.classList.toggle("indeterminate", indet);
+    if (!indet) el.jobFill.style.width = v.percent + "%";
+
+    // Segunda línea: el porcentaje, lo que falta y de qué se trata. Si hay un
+    // aviso suelto (reintento de Groq) ese desplaza al título: enterarse de que
+    // está esperando por la cuota importa más que releer el nombre del archivo.
+    const detalle = [
+      indet ? "" : `${v.percent} %`,
+      v.remainingText ? t("faltan {left}", { left: v.remainingText }) : "",
+      v.note || v.title,
+    ].filter(Boolean).join(" · ");
+    el.jobDetail.textContent = detalle;
+    el.jobDetail.title = detalle;
+
+    // La barra superior repite la etapa: es lo único que se ve cuando la píldora
+    // está colapsada por otro panel.
+    //
+    // El alto solo se vuelve a medir cuando cambió algo que lo puede mover (la
+    // etapa o el detalle). El tick de cada segundo solo mueve los tiempos, y
+    // remedir la ventana una vez por segundo es pedirle un resize a Electron para
+    // nada.
+    const cambioTexto = jobLabelShown !== el.jobLabel.textContent || jobDetailShown !== detalle;
+    jobLabelShown = el.jobLabel.textContent;
+    jobDetailShown = detalle;
+    if (el.status.textContent !== jobLabelShown) setStatus(jobLabelShown);
+    else if (cambioTexto) refreshLayout();
   }
 
   // ---------------------------------------------------------------------------
@@ -350,7 +406,7 @@
           ? t("🔊 Grabando de: {device}", { device: info.salida })
           : t("Se transcribe por partes mientras grabás.");
       el.meetNote.title = info.salida || "";
-      el.meetState.textContent = t("Grabando reunión");
+      setMeetingState(t("Grabando reunión"), true);
     }
     refreshLayout();
   }
@@ -375,10 +431,15 @@
     el.meetLvlSys.style.width = Math.round(Math.max(0, Math.min(1, sistema)) * 100) + "%";
   }
 
-  // Mientras se transcribe al final, el panel sigue visible pero ya no "grabando".
-  function setMeetingState(msg) {
+  /* Texto del panel de la reunión.
+   *
+   * live: ¿sigue grabando? El punto rojo late mientras graba y se queda quieto
+   * cuando ya no. Se pasa explícito porque el estado cambia también DURANTE la
+   * grabación (cuántas líneas van, cuántas partes se están transcribiendo), y ahí
+   * apagar el latido haría creer que la grabación se cortó. */
+  function setMeetingState(msg, live = false) {
     el.meetState.textContent = msg;
-    el.meetDot.style.animation = "none";
+    el.meetDot.style.animation = live ? "" : "none";
     refreshLayout();
   }
 
@@ -781,8 +842,9 @@
     el.pill.classList.add("config-open");
     el.configBtn.classList.add("active");
     if (cb.isRecording()) cb.onRecordStop();
-    el.pill.classList.remove("has-result");
-    setStatus("");
+    // El resultado y el estado NO se borran: la config los tapa (CSS) y al
+    // cerrarla vuelven a aparecer. Borrarlos hacía perder la transcripción de
+    // vista y, con un trabajo largo en curso, el avance con él.
     cb.onConfigOpen(true);  // el orquestador: foco + atajos + cargar config
     refreshLayout();
   }
@@ -1076,7 +1138,7 @@
     setTestBusy: (busy) => { el.cfgTest.disabled = busy; },
     // 📎 deshabilitado mientras se sube/transcribe un archivo (evita dobles envíos).
     setFileBusy: (busy) => { el.fileBtn.disabled = busy; el.fileBtn.classList.toggle("busy", !!busy); },
-    // Archivos largos: confirmación previa + progreso de la conversión.
-    askFileConfirm, closeFileConfirm, setProgress, fmtDuration,
+    // Archivos largos: confirmación previa + panel de trabajo en curso (VLProgress).
+    askFileConfirm, closeFileConfirm, setJob, fmtDuration,
   };
 })();
