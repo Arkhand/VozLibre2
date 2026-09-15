@@ -315,6 +315,9 @@
     if (!MT.isRecording()) return;
     const r = MT.stop();
     meetCerrando = true;
+    // Preguntar es "en vivo": sin grabación no tiene sentido, y dejarlo abierto
+    // apila cuadro + panel de avance en una ventana que tiene tope de alto.
+    UI.closeAsk();
     UI.setMeetingState(t("Transcribiendo lo que falta…"));
 
     // A partir de acá puede haber varios minutos de trabajo (las últimas partes,
