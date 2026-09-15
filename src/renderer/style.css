@@ -730,6 +730,71 @@ html, body {
 
 .meet-note { margin: 10px 0 0; font-size: 10.5px; color: var(--muted); }
 #meetPanel .panel-foot { justify-content: flex-end; }
+/* "Preguntar" a la izquierda, "Detener" a la derecha: el que corta la reunión no
+   tiene que quedar pegado al que se usa a cada rato. */
+#meetAskBtn { margin-right: auto; }
+#meetAskBtn.active { color: var(--text); border-color: var(--accent-2); }
+
+/* ----- Preguntar en vivo sobre lo que se dijo ----- */
+.meet-ask {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--field-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+}
+.meet-ask[hidden] { display: none; }
+.meet-ask-row { display: flex; gap: 6px; align-items: center; }
+/* Mismo look que los campos de la config (el input suelto se ve del sistema:
+   fondo blanco y un anillo de foco que en la píldora oscura queda horrible). */
+.meet-ask-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-line);
+  background: rgba(0, 0, 0, 0.22);   /* el cuadro ya usa --field-bg: el campo va un tono más hondo */
+  color: var(--text);
+  font-size: 12.5px;
+}
+.meet-ask-row input::placeholder { color: var(--muted); }
+.meet-ask-row input:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.18);
+}
+.meet-ask-row input:disabled { opacity: 0.6; }
+.meet-ask-row .sec { flex: 0 0 auto; white-space: nowrap; }
+.meet-ask-state {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 0;
+}
+.meet-ask-state:empty { display: none; }
+.meet-ask-answer {
+  margin-top: 8px;
+  padding: 8px 10px;
+  max-height: 150px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.meet-ask-answer[hidden] { display: none; }
+.meet-ask-answer::-webkit-scrollbar { width: 8px; }
+.meet-ask-answer::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--accent-1), var(--accent-2));
+  border-radius: 8px;
+}
+.meet-ask .cfg-hint { display: block; margin-top: 8px; }
 
 /* ---------------------------------------------------------------------------
    Confirmación antes de grabar una reunión

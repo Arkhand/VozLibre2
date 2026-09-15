@@ -8,6 +8,9 @@
  * nueva y no gasta la de Groq. Se invoca como subprocess con --output-format json,
  * igual que hacía el clipper de KB del que se tomó este patrón.
  *
+ * También responde PREGUNTAS sobre una transcripción (ver "Preguntar" más abajo):
+ * es el mismo CLI y el mismo subprocess, con otro prompt.
+ *
  * QUÉ NO HACE: no inventa hablantes. Whisper no hace diarización y adivinar quién
  * habla por el contenido es una conjetura que se lee como un hecho. La estructura
  * sale de datos REALES: los silencios que ffmpeg ya midió (silencedetect) marcan
@@ -32,6 +35,15 @@ const MAX_CHARS_PER_CALL = 12000;
 
 // El CLI puede tardar: es una llamada a un modelo. 3 min por trozo es holgado.
 const TIMEOUT_MS = 180000;
+
+// Preguntar en vivo es otra cosa: se pregunta EN MEDIO de la reunión y una
+// respuesta que llega a los 3 minutos ya no sirve. Se corta antes y se avisa.
+const ASK_TIMEOUT_MS = 90000;
+
+// Cuánta transcripción se manda en una pregunta. Una hora de reunión ronda los
+// 50k caracteres, así que esto cubre ~2 h; más arriba se manda la última parte
+// (lo reciente es lo que se suele preguntar) y se avisa que se recortó.
+const MAX_ASK_CHARS = 100000;
 
 // Nombre del ejecutable según plataforma (en Windows es claude.cmd, un shim de npm).
 const CLI_NAMES = process.platform === "win32" ? ["claude.cmd", "claude.exe", "claude"] : ["claude"];
@@ -216,7 +228,8 @@ function buildPrompt(text, opts) {
  * El prompt va por stdin y no como argumento: una transcripción de 12k caracteres
  * como argv revienta el límite de línea de comandos de Windows (~32k) y además
  * quedaría el texto completo visible en la lista de procesos. */
-function runCli(prompt, model) {
+function runCli(prompt, opts = {}) {
+  const { model, timeoutMs = TIMEOUT_MS, timeoutError } = opts;
   return new Promise((resolve) => {
     const cli = findCli();
     if (!cli) return resolve({ ok: false, error: t("Claude CLI no encontrado.") + " " + INSTALL_HINT });
@@ -244,8 +257,8 @@ function runCli(prompt, model) {
 
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* ya murió */ }
-      finish({ ok: false, error: t("El formateo tardó demasiado (más de 3 min).") });
-    }, TIMEOUT_MS);
+      finish({ ok: false, error: timeoutError || t("El formateo tardó demasiado (más de 3 min).") });
+    }, timeoutMs);
 
     child.stdout.on("data", (d) => { stdout += d.toString("utf8"); });
     child.stderr.on("data", (d) => { stderr += d.toString("utf8"); });
@@ -307,6 +320,87 @@ function stripFences(s) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Preguntar sobre una transcripción (reunión en curso)
+ * ------------------------------------------------------------------------- */
+
+/* Deja los últimos MAX_ASK_CHARS caracteres, cortando en un fin de línea para no
+ * empezar a mitad de una frase. Devuelve { text, trimmed }: lo de trimmed se le
+ * dice al modelo Y al usuario — una respuesta basada en media reunión sin avisar
+ * es peor que no responder. */
+function trimForAsk(transcript, max = MAX_ASK_CHARS) {
+  const s = (transcript || "").trim();
+  if (s.length <= max) return { text: s, trimmed: false };
+  const cola = s.slice(-max);
+  const nl = cola.indexOf("\n");
+  return { text: (nl >= 0 ? cola.slice(nl + 1) : cola).trim(), trimmed: true };
+}
+
+/* Prompt de la pregunta en vivo.
+ *
+ * Las reglas apuntan todas al mismo lado: que la respuesta salga de lo que se dijo
+ * y no del conocimiento general del modelo. "¿Se habló del presupuesto?" tiene que
+ * poder contestarse "no, no aparece" — si el modelo rellena con lo que suele
+ * hablarse en una reunión así, el que pregunta se entera tarde y mal.
+ *
+ * La pregunta va al final, después de la transcripción: es lo último que lee el
+ * modelo y lo que tiene que contestar. */
+function buildAskPrompt(question, transcript, opts = {}) {
+  const { trimmed, elapsed } = opts;
+  const hasta = typeof elapsed === "number" && elapsed > 0
+    ? `La transcripción llega hasta [${stamp(elapsed)}], que es el punto en el que se pregunta.`
+    : "";
+
+  return [
+    "Respondés preguntas sobre la TRANSCRIPCIÓN de una reunión que está ocurriendo",
+    "ahora mismo. Quien pregunta está en esa reunión y te lee de reojo, en vivo.",
+    "",
+    "La transcripción es automática (Whisper): puede tener palabras mal y nombres",
+    "propios deformados. Cada línea viene como \"[mm:ss] Hablante: texto\", donde",
+    "\"Reunión\" es el audio de los demás participantes y \"Yo\" es el micrófono de",
+    "quien te pregunta.",
+    ...(hasta ? [hasta] : []),
+    ...(trimmed ? ["OJO: la reunión es larga y solo se te pasa su ÚLTIMA parte; no afirmes nada sobre lo anterior."] : []),
+    "",
+    "Reglas:",
+    "- Respondé SOLO con lo que está en la transcripción. No completes con",
+    "  conocimiento general ni con lo que \"seguramente\" se dijo.",
+    "- Si no está, decilo derecho: \"No aparece en lo transcripto\". Es una respuesta",
+    "  útil; inventar no.",
+    "- Cuando sí está, citá la marca de tiempo [mm:ss] y, si ayuda, la frase textual.",
+    "- Si la transcripción es ambigua o la palabra pudo salir mal reconocida, decilo.",
+    "- Breve: 1 a 4 oraciones, en texto plano. Se lee en medio de una reunión.",
+    "- Respondé en el idioma de la PREGUNTA.",
+    "- Sin encabezados, sin preámbulos, sin explicar lo que hiciste.",
+    "",
+    "TRANSCRIPCIÓN:",
+    transcript,
+    "",
+    "PREGUNTA: " + question,
+  ].join("\n");
+}
+
+/* Pregunta sobre la transcripción que va hasta ahora.
+ *   question: lo que escribió el usuario
+ *   transcript: el texto con marcas de tiempo (ya intercalado por pistas)
+ *   opts: { elapsed, model }
+ * Devuelve { ok, text, trimmed } | { ok:false, error }. */
+async function ask(question, transcript, opts = {}) {
+  const q = (question || "").trim();
+  if (!q) return { ok: false, error: t("Escribí una pregunta.") };
+  if (!isAvailable()) return { ok: false, error: t("Claude CLI no encontrado.") + " " + INSTALL_HINT };
+
+  const { text, trimmed } = trimForAsk(transcript);
+  if (!text) return { ok: false, error: t("Todavía no hay nada transcripto para consultar.") };
+
+  const r = await runCli(buildAskPrompt(q, text, { trimmed, elapsed: opts.elapsed }), {
+    model: opts.model,
+    timeoutMs: ASK_TIMEOUT_MS,
+    timeoutError: t("Claude tardó demasiado en responder (más de 1 min y medio)."),
+  });
+  return r.ok ? { ok: true, text: r.text, trimmed } : r;
+}
+
+/* ---------------------------------------------------------------------------
  * API pública
  * ------------------------------------------------------------------------- */
 
@@ -348,7 +442,7 @@ async function formatPart(part, opts = {}) {
       showTimestamps: opts.showTimestamps && i === 0,
       sectionStart: part.start,
     });
-    const r = await runCli(prompt, opts.model);
+    const r = await runCli(prompt, { model: opts.model });
     if (!r.ok) return r;
     outs.push(r.text);
   }
@@ -386,12 +480,15 @@ async function formatTranscript(parts, opts = {}) {
 
 module.exports = {
   isAvailable, resetCliCache, formatTranscript, formatPart, healthCheck, health,
-  INSTALL_HINT, stamp,
+  ask, INSTALL_HINT, stamp,
   // expuestos para tests
+  _trimForAsk: trimForAsk,
+  _buildAskPrompt: buildAskPrompt,
   _markPauses: markPauses,
   _splitForCalls: splitForCalls,
   _stripFences: stripFences,
   _unwrap: unwrap,
   _parseCliOutput: parseCliOutput,
   PARAGRAPH_PAUSE,
+  MAX_ASK_CHARS,
 };

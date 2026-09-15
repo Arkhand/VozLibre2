@@ -108,6 +108,15 @@ Así sabés quién habló sin necesidad de diarización: la etiqueta sale de **q
 
 Funciona con cualquier app (Teams, Zoom, Meet, lo que sea) porque captura el audio a nivel del sistema, y anda con auriculares o con la PC en silencio. Windows va a pedirte compartir una pantalla: **solo se usa el audio, no se graba la imagen**.
 
+#### 💬 Preguntar en vivo, sin cortar la grabación
+
+Con el botón **💬 Preguntar** del panel de la reunión escribís algo como *"¿ya hablaron de la fecha de entrega?"* o *"¿qué dijeron del presupuesto?"* y **Claude Code** te responde con lo que se dijo hasta ese momento, citando la marca de tiempo. Sirve para cuando te distrajiste dos minutos, entraste tarde, o no querés interrumpir para preguntar.
+
+- **Responde solo con la transcripción**: si no se dijo, contesta que no aparece — no completa con lo que "suele" hablarse en una reunión así.
+- Antes de responder **cierra el tramo que se está grabando y lo transcribe**, así lo que se acaba de decir también cuenta (si no, la respuesta miraría una transcripción de hasta 5 minutos de atraso). El corte espera un silencio corto para no partir una frase, y **la grabación no se interrumpe**.
+- La pregunta y la respuesta **no se guardan**: no son parte de la reunión, no van al `.md`.
+- Necesita Claude Code instalado. Si no está, el botón queda deshabilitado y te dice por qué.
+
 Se transcribe por partes **mientras grabás**, así que al cortar el texto ya está casi listo. El panel va diciendo cuántas líneas lleva transcriptas y cuántas partes están yendo a Groq en ese momento; al detener, la barra de avance muestra las partes que faltan, el formateo y el guardado, con su reloj y su estimación (cerrar una reunión larga tarda un rato, y ahí se ve exactamente en qué anda). Cada trozo se corta esperando un silencio (nadie hablando) para no partir una frase por la mitad, y cada frase lleva su marca de tiempo real, así las dos pistas se intercalan en el orden en que se habló. Si usás parlantes abiertos, el eco de tu micrófono se detecta y descarta.
 
 ### 🕘 Historial
@@ -166,7 +175,7 @@ En audios largos partidos en tramos puede agregar encabezados con marca de tiemp
 
 **¿Necesito ffmpeg?** Solo para videos y audios de más de 25 MB. Si falta, la app avisa al arrancar y ofrece instalarlo con un clic (winget). El dictado, las notas de voz y las reuniones andan sin él.
 
-**¿Necesito Claude Code?** No. Es opcional: sirve para que las reuniones y los archivos se guarden con párrafos y puntuación en vez de texto corrido. Sin él, todo lo demás funciona igual; la app lo avisa la primera vez.
+**¿Necesito Claude Code?** No. Es opcional: sirve para que las reuniones y los archivos se guarden con párrafos y puntuación en vez de texto corrido, y para preguntarle en vivo sobre una reunión en curso (💬). Sin él, todo lo demás funciona igual; la app lo avisa la primera vez.
 
 **Algo no anda, ¿qué te mando?** Abrí ⚙ → **📂 Logs** y adjuntá `vozlibre.log` (está en `%APPDATA%\VozLibre2\logs`). Ahí queda cada error con su hora, sin tu API key.
 
@@ -194,7 +203,8 @@ npm run dist       # sube el patch de versión y genera el .exe portable en dist
 ```
 main.js              orquestador del proceso principal
 src/main/            window, hotkeys, typing, settings, ipc,
-                     audio (ffmpeg), format (Claude CLI), history, tray
+                     audio (ffmpeg), format (Claude CLI: formateo y
+                     preguntas en vivo), history, tray
                      (bandeja + avance en el tooltip),
                      log (archivo), update (GitHub releases), autostart
 src/i18n/            i18n.js (t(), estilo gettext) + diccionarios por idioma

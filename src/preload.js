@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("pill", {
   formatHealth: (force) => ipcRenderer.invoke("format:health", !!force),
   formatTranscript: (payload) => ipcRenderer.invoke("format:transcript", payload),
   onFormatProgress: (cb) => ipcRenderer.on("format:progress", (_e, p) => cb(p)),
+  // Preguntar en vivo sobre lo transcripto de la reunión. {ok, text, trimmed}.
+  askTranscript: (payload) => ipcRenderer.invoke("format:ask", payload),
 
   // Historial de transcripciones de archivo (.md en la carpeta elegida + índice).
   historySave: (payload) => ipcRenderer.invoke("history:save", payload),

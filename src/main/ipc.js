@@ -350,6 +350,16 @@ function registerIpc() {
     });
   });
 
+  /* Preguntar sobre la transcripción de la reunión EN CURSO ("¿se dijo algo
+   * de…?"). El renderer manda lo transcripto hasta ahora; acá solo se pasa al
+   * CLI de Claude, que es quien responde. No se guarda nada: es una consulta de
+   * paso, no parte del transcript. */
+  ipcMain.handle("format:ask", (_e, payload) => format.ask(
+    String(payload?.question || ""),
+    String(payload?.transcript || ""),
+    { elapsed: Number(payload?.elapsed) || 0 }
+  ));
+
   // ---- Historial de transcripciones de archivo ----
   ipcMain.handle("history:save", (_e, payload) => {
     const cfg = settings.load();

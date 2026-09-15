@@ -120,7 +120,23 @@
         </div>
       </div>
       <p class="meet-note" id="meetNote" data-i18n>Se transcribe por partes mientras grabás.</p>
+
+      <!-- Preguntar EN VIVO sobre lo que se dijo, sin cortar la grabación. Responde
+           Claude Code leyendo la transcripción que va hasta ese momento; antes de
+           preguntar se cierra el trozo en curso para que lo recién hablado cuente. -->
+      <div class="meet-ask" id="meetAsk" hidden>
+        <div class="meet-ask-row">
+          <input type="text" id="meetAskInput" placeholder="¿Se dijo algo de…?"
+                 autocomplete="off" spellcheck="false" data-i18n-placeholder>
+          <button class="sec primary" id="meetAskSend" data-i18n>Preguntar</button>
+        </div>
+        <p class="meet-ask-state" id="meetAskState"></p>
+        <div class="meet-ask-answer" id="meetAskAnswer" hidden></div>
+        <small class="cfg-hint" data-i18n>Responde solo con lo transcripto de esta reunión: si no se dijo, lo dice. No queda guardado en el .md.</small>
+      </div>
+
       <div class="panel-foot">
+        <button class="sec" id="meetAskBtn" title="Preguntarle a Claude sobre lo que se dijo hasta ahora" data-i18n-title data-i18n>💬 Preguntar</button>
         <button class="sec danger" id="meetStop" data-i18n>⏹ Detener y transcribir</button>
       </div>
     </div>

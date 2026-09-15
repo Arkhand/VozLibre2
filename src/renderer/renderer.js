@@ -249,6 +249,7 @@
   let meetColaFinal = 0;      // cuántas había pendientes al detener (para el %)
   let meetIdioma = "";
   let meetT0 = null;
+  let meetAskEnCurso = false; // una pregunta en vivo por vez
 
   // Nombre de la reunión (sirve de título del trabajo y del .md guardado).
   function meetNombre() {
@@ -298,6 +299,16 @@
 
     UI.setMeetingUI(true, { hasMic: r.hasMic, salida: r.salida });
     UI.setStatus("");
+
+    // Las preguntas en vivo las responde Claude Code; si no está, el botón queda
+    // deshabilitado explicando por qué (en vez de fallar recién al preguntar).
+    try {
+      const fs = await window.pill.formatStatus();
+      UI.setAskAvailable(!!fs?.available, fs?.hint || "");
+    } catch (e) {
+      log("error", `formatStatus (preguntar): ${e.message}`);
+      UI.setAskAvailable(false);
+    }
   }
 
   async function meetStop() {
@@ -357,6 +368,58 @@
     );
     UI.setResult(texto);
     JOB.finish(t("Listo — copiá el texto con 📋"));
+  }
+
+  /* Preguntar sobre lo que se dijo, con la reunión grabando ("¿ya hablaron del
+   * presupuesto?", "¿qué dijeron del deploy?").
+   *
+   * Lo último hablado todavía está dentro del trozo que se está grabando, así que
+   * antes de preguntar se cierra ese trozo y se espera su transcripción: si no, la
+   * respuesta saldría de una transcripción de hasta 5 minutos de atraso y un "no se
+   * dijo" sería mentira. El corte espera un silencio corto para no partir una
+   * frase, y la grabación NO se interrumpe.
+   *
+   * Responde Claude Code leyendo la transcripción; la pregunta y la respuesta no
+   * se guardan en ningún lado (no son parte de la reunión). */
+  async function meetAsk(pregunta) {
+    if (meetAskEnCurso) return;
+    meetAskEnCurso = true;
+    UI.setAskBusy(true);
+    UI.setAskState(t("Poniendo al día la transcripción…"));
+    try {
+      if (MT.isRecording()) {
+        await MT.cutNow();
+        // El trozo recién cortado sale por onChunk un instante después; recién ahí
+        // está en la lista de pendientes que hay que esperar.
+        await new Promise((res) => setTimeout(res, 250));
+        await Promise.allSettled(meetPendientes);
+      }
+
+      const segs = MT.merge(meetLineas);
+      if (!segs.length) {
+        UI.setAskAnswer("", t("Todavía no hay nada transcripto de esta reunión."));
+        return;
+      }
+
+      UI.setAskState(t("Preguntándole a Claude…"));
+      const r = await window.pill.askTranscript({
+        question: pregunta,
+        transcript: MT.render(segs),
+        elapsed: MT.elapsed(),
+      });
+      if (!r?.ok) {
+        UI.setAskAnswer("", "⚠️ " + (r?.error || t("No se pudo consultar a Claude.")));
+        return;
+      }
+      UI.setAskAnswer(r.text, r.trimmed ? t("(la reunión es larga: se consultó solo su última parte)") : "");
+    } catch (e) {
+      log("error", `meetAsk: ${e.message}`);
+      UI.setAskAnswer("", "⚠️ " + t("No se pudo consultar: {msg}", { msg: e.message }));
+    } finally {
+      meetAskEnCurso = false;
+      UI.setAskBusy(false);
+      UI.setAskState("");
+    }
   }
 
   // Cada trozo que cierra una pista se transcribe enseguida, en paralelo con la
@@ -511,6 +574,10 @@
     onMeetStart: () => meetStart(),
     onMeetStop: () => meetStop(),
     onMeetMute: (on) => MT.setMicMuted(on),
+    onMeetAsk: (pregunta) => meetAsk(pregunta),
+    // Para escribir la pregunta la píldora necesita foco (y con foco el main
+    // desactiva los atajos globales, igual que con la config abierta).
+    onAskOpen: (open) => window.pill.setFocusable(open),
     onOpenHistoryFolder: async () => {
       const r = await window.pill.historyOpenFolder();
       if (!r?.ok) UI.setError(r?.error || t("No se pudo abrir la carpeta."));
