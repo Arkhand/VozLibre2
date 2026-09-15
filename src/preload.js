@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("pill", {
   formatHealth: (force) => ipcRenderer.invoke("format:health", !!force),
   formatTranscript: (payload) => ipcRenderer.invoke("format:transcript", payload),
   onFormatProgress: (cb) => ipcRenderer.on("format:progress", (_e, p) => cb(p)),
+  // Preguntar en vivo sobre lo transcripto de la reunión. {ok, text, trimmed}.
+  askTranscript: (payload) => ipcRenderer.invoke("format:ask", payload),
 
   // Historial de transcripciones de archivo (.md en la carpeta elegida + índice).
   historySave: (payload) => ipcRenderer.invoke("history:save", payload),
@@ -91,6 +93,11 @@ contextBridge.exposeInMainWorld("pill", {
   captureShortcut: () => ipcRenderer.invoke("shortcut:capture"),
   // ¿El hook de teclado cargó? {ok, error, transcribe:{ok}, translate:{ok}}.
   hotkeysStatus: () => ipcRenderer.invoke("shortcut:status"),
+
+  // Estado del trabajo largo (archivo/reunión): alimenta el tooltip de la bandeja,
+  // que es lo único visible con la píldora escondida. jobDone avisa al terminar.
+  jobStatus: (text) => ipcRenderer.send("job:status", String(text || "")),
+  jobDone: (msg) => ipcRenderer.send("job:done", String(msg || "")),
 
   // Sistema: versión/plataforma, log a archivo, links externos, actualizaciones.
   appInfo: () => ipcRenderer.invoke("app:info"),

@@ -38,6 +38,13 @@
   // entre dos sílabas; medio segundo callado ya es una pausa de verdad.
   const SILENT_TICKS_TO_CUT = 2;
 
+  // Corte A PEDIDO (preguntar en vivo sobre lo que se dijo): el trozo en curso
+  // todavía no se transcribió, así que sin cortarlo la respuesta se basaría en una
+  // transcripción de hasta 5 minutos de atraso. Se espera un silencio igual que en
+  // el corte normal —para no partir una frase— pero con mucha menos paciencia: el
+  // que pregunta está esperando la respuesta ahí mismo.
+  const CUT_ON_DEMAND_GRACE_MS = 4000;
+
   // Etiquetas de cada pista. No son nombres: son de dónde vino el audio.
   const LABELS = { sistema: t("Reunión"), mic: t("Yo") };
 
@@ -53,6 +60,8 @@
   let trozoInicio = 0;     // segundo de la reunión en que arrancó el trozo actual
   let silentTicks = 0;     // ticks seguidos con las dos pistas en silencio
   let cortando = false;    // hay un corte en curso (stop -> onstop -> start)
+  let cortePedidoAt = 0;   // performance.now() del pedido de corte (0 = no hay)
+  let cortePedidoWaiters = [];  // quién está esperando ese corte
   // Mute de la pista "Yo": la pista se deshabilita (graba silencio) y, si estuvo
   // muteada durante TODO un trozo, ese trozo no se manda a Groq (silencio puro
   // gasta cuota y encima hace alucinar a Whisper).
@@ -221,6 +230,8 @@
     trozoInicio = 0;
     silentTicks = 0;
     cortando = false;
+    cortePedidoAt = 0;
+    cortePedidoWaiters = [];
     micMuted = false;
     pistas = [];
 
@@ -288,13 +299,20 @@
       }
       cb.onLevel(niveles.mic || 0, niveles.sistema || 0);
 
-      // ¿Toca cortar? Cumplido el largo del trozo, se espera un silencio en las
-      // dos pistas; pasado el margen de gracia, se corta hable quien hable.
+      // ¿Toca cortar? Por tiempo (se cumplió el largo del trozo) o porque alguien
+      // lo pidió (una pregunta en vivo). En los dos casos se espera un silencio en
+      // las dos pistas para no partir una frase; pasado el margen de gracia se
+      // corta hable quien hable. El margen del pedido es mucho más corto: hay
+      // alguien esperando la respuesta.
       const enTrozo = (ahora - trozoInicio) * 1000;
-      if (!cortando && enTrozo >= CHUNK_MS) {
+      const aPedido = cortePedidoAt > 0;
+      if (!cortando && (enTrozo >= CHUNK_MS || aPedido)) {
         const callados = Object.values(niveles).every((n) => n < SILENCE_LEVEL);
         silentTicks = callados ? silentTicks + 1 : 0;
-        if (silentTicks >= SILENT_TICKS_TO_CUT || enTrozo >= CHUNK_MS + CUT_GRACE_MS) cortarTrozo();
+        const seAcaboLaGracia = aPedido
+          ? performance.now() - cortePedidoAt >= CUT_ON_DEMAND_GRACE_MS
+          : enTrozo >= CHUNK_MS + CUT_GRACE_MS;
+        if (silentTicks >= SILENT_TICKS_TO_CUT || seAcaboLaGracia) cortarTrozo();
       }
       chunkTimer = setTimeout(tick, 250);
     };
@@ -321,7 +339,30 @@
         if (p.recorder.state === "inactive") p.recorder.start();
       }
       cortando = false;
+      // Los trozos ya salieron por onstop -> onChunk: quien pidió el corte puede
+      // seguir (le toca esperar a que Groq los transcriba).
+      resolverCortePedido();
     }, 0);
+  }
+
+  /* Pide cortar el trozo AHORA (o apenas haya un silencio) y avisa cuando el corte
+   * ya ocurrió. Lo usa la pregunta en vivo: sin esto, lo último que se habló no
+   * estaría todavía en ninguna parte.
+   *
+   * Sin grabación no hay nada que cortar: resuelve en falso y el que pregunta se
+   * arregla con lo que ya hay. */
+  function cutNow() {
+    if (!grabando) return Promise.resolve({ ok: false });
+    if (!cortePedidoAt) cortePedidoAt = performance.now();
+    return new Promise((resolve) => cortePedidoWaiters.push(resolve));
+  }
+
+  function resolverCortePedido() {
+    if (!cortePedidoWaiters.length && !cortePedidoAt) return;
+    const esperando = cortePedidoWaiters;
+    cortePedidoAt = 0;
+    cortePedidoWaiters = [];
+    for (const r of esperando) r({ ok: true });
   }
 
   // Entrega un trozo terminado al orquestador, con su ubicación en la línea de
@@ -360,6 +401,9 @@
     }, 100);
 
     cb.onLevel(0, 0);
+    // Los trozos finales salen por onstop igual que los demás, así que un pedido
+    // de corte pendiente ya está cumplido: soltarlo para que nadie quede esperando.
+    resolverCortePedido();
     if (opts.motivo) cb.onError(opts.motivo);
     return { ok: true, duration: total };
   }
@@ -431,7 +475,7 @@
   }
 
   window.VLMeeting = {
-    configure, start, stop, isRecording, elapsed, merge, render, preview,
+    configure, start, stop, isRecording, elapsed, merge, render, preview, cutNow,
     setMicMuted, isMicMuted,
     LABELS, CHUNK_MS, SILENCE_LEVEL,
     // expuestos para tests

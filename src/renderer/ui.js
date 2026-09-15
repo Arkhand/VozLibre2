@@ -19,6 +19,9 @@
     meetPanel: $("meetPanel"), meetDot: $("meetDot"), meetState: $("meetState"),
     meetTimer: $("meetTimer"), meetLvlSys: $("meetLvlSys"), meetLvlMic: $("meetLvlMic"),
     meetNote: $("meetNote"), meetStop: $("meetStop"), meetMute: $("meetMute"),
+    // Preguntar en vivo sobre lo que se dijo
+    meetAsk: $("meetAsk"), meetAskBtn: $("meetAskBtn"), meetAskInput: $("meetAskInput"),
+    meetAskSend: $("meetAskSend"), meetAskState: $("meetAskState"), meetAskAnswer: $("meetAskAnswer"),
     // Historial
     historyPanel: $("historyPanel"), histList: $("histList"), histClose: $("histClose"),
     histFolderBtn: $("histFolderBtn"), savedPath: $("savedPath"), histHint: $("histHint"),
@@ -30,10 +33,12 @@
     // Confirmación para cortar una reunión en curso
     meetCut: $("meetCut"), meetCutMsg: $("meetCutMsg"),
     meetCutCancel: $("meetCutCancel"), meetCutOk: $("meetCutOk"),
-    // Confirmacion de archivo largo + progreso de conversion
+    // Confirmacion de archivo largo
     fileConfirm: $("fileConfirm"), fcTitle: $("fcTitle"), fcDetail: $("fcDetail"),
     fcCancel: $("fcCancel"), fcOk: $("fcOk"),
-    progress: $("progress"), progressBar: $("progressBar"),
+    // Trabajo en curso (etapa, avance, tiempos)
+    jobLabel: $("jobLabel"), jobTime: $("jobTime"),
+    jobTrack: $("jobTrack"), jobFill: $("jobFill"), jobDetail: $("jobDetail"),
     barCenter: $("barCenter"), status: $("status"), timer: $("timer"),
     result: $("result"), copyBtn: $("copyBtn"), clearBtn: $("clearBtn"), err: $("err"),
     // Config
@@ -96,6 +101,8 @@
     onMeetStart: () => {},
     onMeetStop: () => {},
     onMeetMute: () => false,    // (bool) silenciar tu micrófono; devuelve el estado
+    onMeetAsk: () => {},        // (pregunta) consultar lo transcripto hasta ahora
+    onAskOpen: () => {},        // (bool) el cuadro de preguntar necesita foco para escribir
     // Sistema (config)
     onAppInfo: async () => ({ version: "", packaged: false, autostart: { supported: false } }),
     onOpenExternal: () => {},        // (url) abrir en el navegador (hosts permitidos)
@@ -237,16 +244,70 @@
     if (r) r(answer);
   }
 
-  // Barra de progreso de ffmpeg (0..1). Con null se oculta.
-  function setProgress(value) {
-    if (value === null || value === undefined) {
-      el.progress.classList.remove("show");
-      el.progressBar.style.width = "0%";
-    } else {
-      el.progress.classList.add("show");
-      el.progressBar.style.width = Math.round(Math.max(0, Math.min(1, value)) * 100) + "%";
+  // ---------------------------------------------------------------------------
+  // Trabajo en curso (lo que dibuja VLProgress)
+  // ---------------------------------------------------------------------------
+  /* Recibe la foto del estado (view de VLProgress) y la pinta. Se llama una vez
+   * por segundo mientras haya trabajo, así que solo toca texto y un ancho.
+   *
+   * Con {active:false, final} el trabajo terminó: la barra se apaga y el mensaje
+   * final queda en la línea de estado de la barra superior (que sobrevive a
+   * cambiar de panel). */
+  let jobLabelShown = "";    // última etapa que se copió a la barra superior
+  let jobDetailShown = "";   // último detalle dibujado (para no remedir el alto de gusto)
+
+  function setJob(v) {
+    if (!v || !v.active) {
+      el.pill.classList.remove("job-on");
+      el.jobLabel.textContent = "";
+      el.jobDetail.textContent = "";
+      el.jobFill.style.width = "0%";
+      el.jobTrack.classList.remove("indeterminate");
+      // El mensaje final reemplaza a la etapa. Sin mensaje se limpia, pero solo
+      // si lo que hay es la etapa que pusimos nosotros: quien terminó el trabajo
+      // pudo haber dejado su propio estado ("Pegado ✓") y no hay que pisarlo.
+      if (v && v.final) setStatus(v.final);
+      else if (el.status.textContent === jobLabelShown) setStatus("");
+      else refreshLayout();
+      jobLabelShown = "";
+      jobDetailShown = "";
+      return;
     }
-    refreshLayout();
+
+    el.pill.classList.add("job-on");
+    el.jobLabel.textContent = v.label || t("Trabajando…");
+
+    // Arriba a la derecha va solo el transcurrido: es corto y deja lugar para la
+    // etapa, que es lo que más importa leer.
+    el.jobTime.textContent = v.elapsedText;
+
+    const indet = v.percent === null || v.percent === undefined;
+    el.jobTrack.classList.toggle("indeterminate", indet);
+    if (!indet) el.jobFill.style.width = v.percent + "%";
+
+    // Segunda línea: el porcentaje, lo que falta y de qué se trata. Si hay un
+    // aviso suelto (reintento de Groq) ese desplaza al título: enterarse de que
+    // está esperando por la cuota importa más que releer el nombre del archivo.
+    const detalle = [
+      indet ? "" : `${v.percent} %`,
+      v.remainingText ? t("faltan {left}", { left: v.remainingText }) : "",
+      v.note || v.title,
+    ].filter(Boolean).join(" · ");
+    el.jobDetail.textContent = detalle;
+    el.jobDetail.title = detalle;
+
+    // La barra superior repite la etapa: es lo único que se ve cuando la píldora
+    // está colapsada por otro panel.
+    //
+    // El alto solo se vuelve a medir cuando cambió algo que lo puede mover (la
+    // etapa o el detalle). El tick de cada segundo solo mueve los tiempos, y
+    // remedir la ventana una vez por segundo es pedirle un resize a Electron para
+    // nada.
+    const cambioTexto = jobLabelShown !== el.jobLabel.textContent || jobDetailShown !== detalle;
+    jobLabelShown = el.jobLabel.textContent;
+    jobDetailShown = detalle;
+    if (el.status.textContent !== jobLabelShown) setStatus(jobLabelShown);
+    else if (cambioTexto) refreshLayout();
   }
 
   // ---------------------------------------------------------------------------
@@ -331,6 +392,8 @@
 
   function setMeetingUI(on, info = {}) {
     meetingOn = !!on;
+    // Preguntar es solo durante la reunión: sin grabación no hay "en vivo".
+    if (!meetingOn) { closeAsk(); setAskAnswer(""); setAskState(""); clearAskInput(); }
     el.pill.classList.toggle("meeting-on", meetingOn);
     el.meetBtn.classList.toggle("recording", meetingOn);
     el.meetBtn.title = meetingOn ? t("Grabando… clic para detener") : t("Grabar una reunión (Teams, Zoom, Meet…)");
@@ -350,7 +413,7 @@
           ? t("🔊 Grabando de: {device}", { device: info.salida })
           : t("Se transcribe por partes mientras grabás.");
       el.meetNote.title = info.salida || "";
-      el.meetState.textContent = t("Grabando reunión");
+      setMeetingState(t("Grabando reunión"), true);
     }
     refreshLayout();
   }
@@ -375,14 +438,102 @@
     el.meetLvlSys.style.width = Math.round(Math.max(0, Math.min(1, sistema)) * 100) + "%";
   }
 
-  // Mientras se transcribe al final, el panel sigue visible pero ya no "grabando".
-  function setMeetingState(msg) {
+  /* Texto del panel de la reunión.
+   *
+   * live: ¿sigue grabando? El punto rojo late mientras graba y se queda quieto
+   * cuando ya no. Se pasa explícito porque el estado cambia también DURANTE la
+   * grabación (cuántas líneas van, cuántas partes se están transcribiendo), y ahí
+   * apagar el latido haría creer que la grabación se cortó. */
+  function setMeetingState(msg, live = false) {
     el.meetState.textContent = msg;
-    el.meetDot.style.animation = "none";
+    el.meetDot.style.animation = live ? "" : "none";
     refreshLayout();
   }
 
   function isMeetingOn() { return meetingOn; }
+
+  // ---------------------------------------------------------------------------
+  // Preguntar en vivo sobre lo que se dijo
+  // ---------------------------------------------------------------------------
+  /* Un cuadrito dentro del panel de la reunión: escribís la pregunta y Claude
+   * responde con lo que haya transcripto hasta ese momento. La grabación NO se
+   * corta ni se pausa.
+   *
+   * Para escribir hace falta foco, y la píldora normalmente no lo toma (si no, el
+   * dictado escribiría en la píldora en vez de en tu app). Así que abrir el cuadro
+   * pide foco igual que la config — y al cerrarlo se devuelve. */
+  let askOpen = false;
+  let askAvailable = true;   // ¿está Claude Code para responder?
+
+  function openAsk() {
+    if (askOpen || !askAvailable) return;
+    askOpen = true;
+    el.meetAsk.hidden = false;
+    el.meetAskBtn.classList.add("active");
+    cb.onAskOpen(true);
+    refreshLayout();
+    // El foco llega un instante después (la ventana recién se hizo enfocable).
+    setTimeout(() => el.meetAskInput.focus(), 60);
+  }
+
+  function closeAsk() {
+    if (!askOpen) return;
+    askOpen = false;
+    el.meetAsk.hidden = true;
+    el.meetAskBtn.classList.remove("active");
+    // El foco se devuelve solo si no lo está usando otro. Cortar la reunión desde
+    // ⚙ cierra este cuadro DESPUÉS de que se abrió la config (la reunión tarda en
+    // cerrar), y devolver el foco ahí dejaría la config sin poder escribir.
+    if (!configOpen) cb.onAskOpen(false);
+    refreshLayout();
+  }
+
+  function toggleAsk() { if (askOpen) closeAsk(); else openAsk(); }
+  function isAskOpen() { return askOpen; }
+
+  /* Sin Claude Code instalado no hay quién responda: el botón queda deshabilitado
+   * diciendo por qué, en vez de ofrecer algo que va a fallar. */
+  function setAskAvailable(on, hint = "") {
+    askAvailable = !!on;
+    el.meetAskBtn.disabled = !askAvailable;
+    el.meetAskBtn.title = askAvailable
+      ? t("Preguntarle a Claude sobre lo que se dijo hasta ahora")
+      : t("Necesita Claude Code instalado. {hint}", { hint });
+    if (!askAvailable) closeAsk();
+  }
+
+  // Mientras se consulta: el botón y el campo quedan bloqueados (una pregunta por vez).
+  // Al liberar, la pregunta anterior queda seleccionada: se ve qué se preguntó y
+  // escribir la siguiente la reemplaza sin tener que borrarla.
+  function setAskBusy(busy) {
+    el.meetAskSend.disabled = !!busy;
+    el.meetAskInput.disabled = !!busy;
+    el.meetAskSend.textContent = busy ? t("Preguntando…") : t("Preguntar");
+    if (!busy && askOpen) { el.meetAskInput.focus(); el.meetAskInput.select(); }
+  }
+
+  function setAskState(msg) {
+    el.meetAskState.textContent = msg || "";
+    refreshLayout();
+  }
+
+  /* La respuesta va como TEXTO (nunca innerHTML): la escribe un modelo a partir de
+   * lo que se habló, así que se trata como dato, no como marcado. */
+  function setAskAnswer(text, nota = "") {
+    const cuerpo = (text || "").trim();
+    el.meetAskAnswer.hidden = !cuerpo && !nota;
+    el.meetAskAnswer.textContent = nota ? `${cuerpo}\n\n${nota}`.trim() : cuerpo;
+    refreshLayout();
+  }
+
+  function submitAsk() {
+    const q = el.meetAskInput.value.trim();
+    if (!q) { el.meetAskInput.focus(); return; }
+    cb.onMeetAsk(q);
+  }
+
+  // Pregunta contestada: se limpia el campo para la próxima, sin perder la respuesta.
+  function clearAskInput() { el.meetAskInput.value = ""; }
 
   // ---------------------------------------------------------------------------
   // Historial de transcripciones
@@ -781,8 +932,9 @@
     el.pill.classList.add("config-open");
     el.configBtn.classList.add("active");
     if (cb.isRecording()) cb.onRecordStop();
-    el.pill.classList.remove("has-result");
-    setStatus("");
+    // El resultado y el estado NO se borran: la config los tapa (CSS) y al
+    // cerrarla vuelven a aparecer. Borrarlos hacía perder la transcripción de
+    // vista y, con un trabajo largo en curso, el avance con él.
     cb.onConfigOpen(true);  // el orquestador: foco + atajos + cargar config
     refreshLayout();
   }
@@ -974,6 +1126,12 @@
       else cb.onMeetStart();
     });
     el.meetStop.addEventListener("click", () => cb.onMeetStop());
+    el.meetAskBtn.addEventListener("click", toggleAsk);
+    el.meetAskSend.addEventListener("click", submitAsk);
+    el.meetAskInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); submitAsk(); }
+      if (e.key === "Escape") { e.preventDefault(); closeAsk(); }
+    });
     el.meetMute.addEventListener("click", () => {
       const muted = cb.onMeetMute(!el.meetMute.classList.contains("muted"));
       setMuteUI(muted);
@@ -1066,6 +1224,8 @@
     toggleHistory, openHistory, closeHistory, isHistoryOpen,
     // Reunión
     setMeetingUI, setMeetingTime, setMeetingLevels, setMeetingState, isMeetingOn,
+    // Preguntar en vivo (dentro del panel de la reunión)
+    isAskOpen, closeAsk, setAskAvailable, setAskBusy, setAskState, setAskAnswer, clearAskInput,
     askMeetConfirm, closeMeetConfirm,
     closeConfig, requestCloseConfig, isDirty, clearDirty,
     loadConfigIntoUI, readConfigForm, flashSaved,
@@ -1076,7 +1236,7 @@
     setTestBusy: (busy) => { el.cfgTest.disabled = busy; },
     // 📎 deshabilitado mientras se sube/transcribe un archivo (evita dobles envíos).
     setFileBusy: (busy) => { el.fileBtn.disabled = busy; el.fileBtn.classList.toggle("busy", !!busy); },
-    // Archivos largos: confirmación previa + progreso de la conversión.
-    askFileConfirm, closeFileConfirm, setProgress, fmtDuration,
+    // Archivos largos: confirmación previa + panel de trabajo en curso (VLProgress).
+    askFileConfirm, closeFileConfirm, setJob, fmtDuration,
   };
 })();

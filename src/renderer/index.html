@@ -36,6 +36,20 @@
       <button class="icon-btn" id="closeBtn" title="Ocultar (queda en la bandeja)" data-i18n-title>✕</button>
     </div>
 
+    <!-- TRABAJO EN CURSO: la única parte que se ve SIEMPRE, con cualquier panel
+         abierto (config, historial, reunión). Dice qué etapa corre, por dónde va,
+         cuánto lleva y cuánto falta. Sin esto, un archivo de una hora o una
+         reunión larga parecen colgados. -->
+    <div class="job" id="jobPanel">
+      <div class="job-head">
+        <span class="job-spin" id="jobSpin" aria-hidden="true"></span>
+        <span class="job-label" id="jobLabel"></span>
+        <span class="job-time" id="jobTime"></span>
+      </div>
+      <div class="job-track" id="jobTrack"><div class="job-fill" id="jobFill"></div></div>
+      <p class="job-detail" id="jobDetail"></p>
+    </div>
+
     <!-- Panel de AVISOS: cosas que conviene saber al arrancar (falta ffmpeg, no hay
          Claude CLI, hay versión nueva, los atajos no cargaron). Se muestran de a
          uno, en cola, y nunca encima de la config. -->
@@ -106,7 +120,23 @@
         </div>
       </div>
       <p class="meet-note" id="meetNote" data-i18n>Se transcribe por partes mientras grabás.</p>
+
+      <!-- Preguntar EN VIVO sobre lo que se dijo, sin cortar la grabación. Responde
+           Claude Code leyendo la transcripción que va hasta ese momento; antes de
+           preguntar se cierra el trozo en curso para que lo recién hablado cuente. -->
+      <div class="meet-ask" id="meetAsk" hidden>
+        <div class="meet-ask-row">
+          <input type="text" id="meetAskInput" placeholder="¿Se dijo algo de…?"
+                 autocomplete="off" spellcheck="false" data-i18n-placeholder>
+          <button class="sec primary" id="meetAskSend" data-i18n>Preguntar</button>
+        </div>
+        <p class="meet-ask-state" id="meetAskState"></p>
+        <div class="meet-ask-answer" id="meetAskAnswer" hidden></div>
+        <small class="cfg-hint" data-i18n>Responde solo con lo transcripto de esta reunión: si no se dijo, lo dice. No queda guardado en el .md.</small>
+      </div>
+
       <div class="panel-foot">
+        <button class="sec" id="meetAskBtn" title="Preguntarle a Claude sobre lo que se dijo hasta ahora" data-i18n-title data-i18n>💬 Preguntar</button>
         <button class="sec danger" id="meetStop" data-i18n>⏹ Detener y transcribir</button>
       </div>
     </div>
@@ -148,9 +178,6 @@
         </div>
       </div>
     </div>
-
-    <!-- Progreso de la conversión con ffmpeg (archivos largos / video). -->
-    <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
 
     <!-- Panel de CONFIGURACIÓN (se abre con ⚙). Los campos scrollean; el botón
          Guardar queda fijo abajo (fuera del scroll). -->
@@ -342,6 +369,7 @@
        orquesta). defer = se ejecutan en orden tras parsear el DOM. -->
   <script src="../i18n/es.js" defer></script>
   <script src="../i18n/i18n.js" defer></script>
+  <script src="progress.js" defer></script>
   <script src="ui.js" defer></script>
   <script src="transcription.js" defer></script>
   <script src="meeting.js" defer></script>

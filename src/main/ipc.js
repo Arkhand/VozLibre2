@@ -13,6 +13,7 @@ const settings = require("./settings");
 const hotkeys = require("./hotkeys");
 const typing = require("./typing");
 const windowMod = require("./window");
+const tray = require("./tray");
 const audio = require("./audio");
 const format = require("./format");
 const history = require("./history");
@@ -129,6 +130,12 @@ function registerIpc() {
   // usar "Salir" en el menú del icono de la bandeja.
   ipcMain.on("pill:close", () => { windowMod.hide(); });
   ipcMain.on("pill:resize", (_e, height) => windowMod.resizeTo(height));
+
+  // ---- Avance de los trabajos largos (archivo / reunión) ----
+  // El renderer manda el estado ya armado; acá solo se refleja en la bandeja,
+  // que es lo que se ve con la píldora escondida.
+  ipcMain.on("job:status", (_e, text) => tray.setJob(String(text || "")));
+  ipcMain.on("job:done", (_e, msg) => tray.notifyDone(String(msg || "")));
 
   // ---- Config (settings) ----
   ipcMain.handle("settings:load", () => settings.load());
@@ -342,6 +349,16 @@ function registerIpc() {
       onProgress: (i, total) => send({ index: i, total }),
     });
   });
+
+  /* Preguntar sobre la transcripción de la reunión EN CURSO ("¿se dijo algo
+   * de…?"). El renderer manda lo transcripto hasta ahora; acá solo se pasa al
+   * CLI de Claude, que es quien responde. No se guarda nada: es una consulta de
+   * paso, no parte del transcript. */
+  ipcMain.handle("format:ask", (_e, payload) => format.ask(
+    String(payload?.question || ""),
+    String(payload?.transcript || ""),
+    { elapsed: Number(payload?.elapsed) || 0 }
+  ));
 
   // ---- Historial de transcripciones de archivo ----
   ipcMain.handle("history:save", (_e, payload) => {
